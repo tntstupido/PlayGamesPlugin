@@ -1,0 +1,4 @@
+{
+    "plugin_name": "PlayGamesPlugin",
+    "plugin_main_class": "com.mladenstojanovic.playgamesplugin.PlayGamesPlugin"
+}

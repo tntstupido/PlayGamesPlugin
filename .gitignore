@@ -1,0 +1,28 @@
+# Built AAR files (build from source)
+*.aar
+
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Android Studio
+*.iml
+.idea/
+local.properties
+
+# Kotlin
+*.class
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Test outputs
+app/build/
+
+# Deprecated v1 plugin files
+*.gdap
