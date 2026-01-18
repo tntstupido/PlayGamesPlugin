@@ -42,9 +42,23 @@ Technical reference for developing and extending the PlayGamesPlugin.
 |------|---------|
 | `app/src/main/java/.../PlayGamesPlugin.kt` | Main plugin class |
 | `app/src/main/assets/godot_plugin.json` | Plugin metadata for Godot |
-| `app/src/main/AndroidManifest.xml` | Permissions |
+| `app/src/main/AndroidManifest.xml` | Permissions + **v2 plugin registration** |
 | `app/build.gradle.kts` | Dependencies and build config |
 | `addons/play_games_plugin/play_games_plugin.gd` | Godot export plugin |
+
+## Critical: Godot v2 Plugin Registration
+
+For Godot 4.2+, the plugin **must** be registered in AndroidManifest.xml:
+
+```xml
+<application>
+    <meta-data
+        android:name="org.godotengine.plugin.v2.PlayGamesPlugin"
+        android:value="com.mladenstojanovic.playgamesplugin.PlayGamesPlugin" />
+</application>
+```
+
+Without this, `Engine.has_singleton("PlayGamesPlugin")` will return `false` even though the plugin code runs.
 
 ## Play Games Services v2 API
 
@@ -212,15 +226,24 @@ Current dependencies in `app/build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    // Godot Android library
-    implementation("org.godotengine:godot:4.5.1.stable")
-
-    // Play Games Services v2
-    implementation("com.google.android.gms:play-services-games-v2:20.1.0")
+    // Use compileOnly to avoid bundling resources that conflict with Godot
+    compileOnly("org.godotengine:godot:4.5.1.stable")
+    compileOnly("com.google.android.gms:play-services-games-v2:21.0.0")
 }
 ```
 
-**Note:** `play-services-auth` is NOT needed for v2. The old GoogleSignIn API is deprecated.
+**Important Notes:**
+- Use `compileOnly` instead of `implementation` to avoid bundling Material Components resources
+- `play-services-auth` is NOT needed for v2 - the old GoogleSignIn API is deprecated
+- The actual dependencies are provided at runtime via `_get_android_dependencies()` in the EditorExportPlugin
+
+### Why compileOnly?
+
+Using `implementation` bundles resources from transitive dependencies (Material Components, AppCompat) into the AAR. These conflict with Godot's resources, causing errors like:
+- `attr/colorPrimary not found`
+- `Theme.MaterialComponents.DayNight.DarkActionBar not found`
+
+Using `compileOnly` keeps the AAR minimal - only your plugin code is bundled.
 
 ## Adding New Features
 
@@ -291,6 +314,8 @@ adb logcat | grep godot
 | `ClassNotFoundException` | Missing dependency | Check AAR includes all deps |
 | Signal not received | Wrong thread | Use `runOnUiThread { emitSignal() }` |
 | Method not found | Missing annotation | Add `@UsedByGodot` |
+| Singleton not found | Missing v2 registration | Add meta-data to AndroidManifest.xml |
+| Resource linking errors | Material Components in AAR | Use `compileOnly` instead of `implementation` |
 
 ## Version History
 

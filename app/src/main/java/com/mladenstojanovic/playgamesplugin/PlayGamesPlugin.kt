@@ -16,6 +16,14 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
 
     companion object {
         private const val TAG = "PlayGamesPlugin"
+
+        init {
+            Log.d(TAG, "PlayGamesPlugin class loaded (static init)")
+        }
+    }
+
+    init {
+        Log.d(TAG, "PlayGamesPlugin instance created")
     }
 
     private var gamesSignInClient: GamesSignInClient? = null

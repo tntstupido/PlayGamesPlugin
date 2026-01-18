@@ -110,17 +110,19 @@ func _ready():
 ### Export Prerequisites
 
 1. Android export template installed
-2. Debug keystore or release keystore configured
-3. App ID configured in `play_games_plugin.gd`
+2. **Android Build Template installed** (Project → Install Android Build Template)
+3. Debug keystore or release keystore configured
+4. App ID configured in `play_games_plugin.gd`
 
 ### Export Steps
 
-1. Go to **Project** → **Export**
-2. Select your Android preset (or create one)
-3. Configure:
+1. Go to **Project** → **Install Android Build Template** (if not done already)
+2. Go to **Project** → **Export**
+3. Select your Android preset (or create one)
+4. Configure:
    - **Package** → **Unique Name**: Must match Play Console
    - **Keystore**: Debug or release keystore
-4. Click **Export Project** or **Export APK**
+5. Click **Export Project** or **Export APK**
 
 The plugin automatically:
 - Includes the appropriate AAR (debug/release)
@@ -158,10 +160,35 @@ v2 API changes:
 - Ensure the folder is named exactly `play_games_plugin`
 - Try restarting Godot
 
+### Plugin Singleton Not Found on Android
+
+This is the most common issue. The plugin loads but `Engine.has_singleton("PlayGamesPlugin")` returns false.
+
+**Root cause:** Missing v2 plugin registration in AndroidManifest.xml
+
+**Solution:** Ensure the AAR's AndroidManifest.xml contains:
+```xml
+<application>
+    <meta-data
+        android:name="org.godotengine.plugin.v2.PlayGamesPlugin"
+        android:value="com.mladenstojanovic.playgamesplugin.PlayGamesPlugin" />
+</application>
+```
+
+If you built the plugin yourself, check `app/src/main/AndroidManifest.xml` includes this meta-data.
+
 ### Export Fails with AAR Error
 
 - Verify both AAR files exist in `addons/play_games_plugin/`
 - Check AAR file names match exactly: `PlayGamesPlugin-debug.aar` and `PlayGamesPlugin-release.aar`
+
+### Export Fails with Resource Linking Errors
+
+If you see errors like `attr/colorPrimary not found` or `Theme.MaterialComponents.DayNight.DarkActionBar not found`:
+
+- The AAR contains conflicting Material Components resources
+- Rebuild the plugin with `compileOnly` dependencies instead of `implementation`
+- Delete `android/build` folder in Godot project and reinstall Android Build Template
 
 ### Sign-in Fails at Runtime
 
@@ -221,3 +248,26 @@ class AndroidExportPlugin extends EditorExportPlugin:
 ```
 
 This file is bundled inside the AAR and tells Godot which class to load.
+
+### AndroidManifest.xml (inside AAR)
+
+**Critical for Godot 4.2+:** The AAR must include v2 plugin registration:
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <application>
+        <!-- This meta-data is REQUIRED for Godot to register the singleton -->
+        <meta-data
+            android:name="org.godotengine.plugin.v2.PlayGamesPlugin"
+            android:value="com.mladenstojanovic.playgamesplugin.PlayGamesPlugin" />
+    </application>
+
+</manifest>
+```
+
+Without this meta-data entry, the plugin code will run (you may see Play Games sign-in) but `Engine.has_singleton()` will return false.

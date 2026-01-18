@@ -6,6 +6,13 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <application>
+        <!-- Godot v2 Plugin Registration (required for Godot 4.2+) -->
+        <meta-data
+            android:name="org.godotengine.plugin.v2.PlayGamesPlugin"
+            android:value="com.mladenstojanovic.playgamesplugin.PlayGamesPlugin" />
+    </application>
+
     <!--
         Note: The Play Games Services APP_ID meta-data is injected by the
         EditorExportPlugin at export time. Configure it in:

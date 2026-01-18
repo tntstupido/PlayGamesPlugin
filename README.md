@@ -1,10 +1,12 @@
 # PlayGamesPlugin - Godot Android Plugin
 
-A Godot 4.x Android plugin for Google Play Games Services v2.
+A Godot 4.2+ Android plugin for Google Play Games Services v2.
+
+**Tested with:** Godot 4.5.1, Play Games Services v2 SDK 21.0.0, Android SDK 35
 
 ## Overview
 
-This plugin integrates Google Play Games Services into Godot games using the modern v2 API. It uses the Godot EditorExportPlugin system for seamless integration.
+This plugin integrates Google Play Games Services into Godot games using the modern v2 API. It uses the Godot v2 plugin format with EditorExportPlugin for seamless integration.
 
 ### Features
 
@@ -26,10 +28,10 @@ This plugin integrates Google Play Games Services into Godot games using the mod
 
 ## Prerequisites
 
-- Godot Engine 4.5.1 or later
+- Godot Engine 4.2+ (tested with 4.5.1)
 - Android Studio (for building the plugin)
 - Google Play Console account with Play Games Services configured
-- JDK 8 or later
+- JDK 17 or later
 
 ## Project Structure
 
@@ -40,7 +42,7 @@ PlayGamesPlugin/
 │   └── src/main/
 │       ├── assets/
 │       │   └── godot_plugin.json     # Plugin metadata (bundled in AAR)
-│       ├── AndroidManifest.xml       # Permissions
+│       ├── AndroidManifest.xml       # Permissions + v2 plugin registration
 │       └── java/.../PlayGamesPlugin.kt
 ├── addons/
 │   └── play_games_plugin/            # Copy this to your Godot project
@@ -56,7 +58,7 @@ PlayGamesPlugin/
 ### 1. Build the Plugin
 
 ```bash
-./gradlew assembleDebug assembleRelease
+./gradlew clean assembleDebug assembleRelease
 ```
 
 ### 2. Install in Godot Project
@@ -66,8 +68,8 @@ Copy to your Godot project:
 your_project/addons/play_games_plugin/
 ├── plugin.cfg
 ├── play_games_plugin.gd
-├── PlayGamesPlugin-debug.aar    # from app/build/outputs/aar/
-└── PlayGamesPlugin-release.aar  # from app/build/outputs/aar/
+├── PlayGamesPlugin-debug.aar    # from app/build/outputs/aar/app-debug.aar
+└── PlayGamesPlugin-release.aar  # from app/build/outputs/aar/app-release.aar
 ```
 
 ### 3. Configure App ID
@@ -81,7 +83,13 @@ const PLAY_GAMES_APP_ID = "123456789012"  # Your App ID from Play Console
 
 In Godot: **Project → Project Settings → Plugins → Enable "PlayGamesPlugin"**
 
-### 5. Use in GDScript
+### 5. Install Android Build Template
+
+In Godot: **Project → Install Android Build Template**
+
+This is required for Gradle-based Android plugins.
+
+### 6. Use in GDScript
 
 ```gdscript
 var play_games = null
@@ -91,16 +99,25 @@ func _ready():
         play_games = Engine.get_singleton("PlayGamesPlugin")
         play_games.sign_in_success.connect(_on_sign_in_success)
         play_games.sign_in_failed.connect(_on_sign_in_failed)
+        play_games.player_info_loaded.connect(_on_player_info_loaded)
 
         # Check if already signed in (automatic sign-in)
         if play_games.isSignedIn():
             print("Already signed in as: ", play_games.getPlayerDisplayName())
+
+func _notification(what):
+    # Refresh auth when app resumes (important!)
+    if what == NOTIFICATION_APPLICATION_RESUMED and play_games:
+        play_games.refreshAuthStatus()
 
 func _on_sign_in_success(player_id: String, player_name: String):
     print("Signed in: ", player_name)
 
 func _on_sign_in_failed():
     print("Sign-in failed or declined")
+
+func _on_player_info_loaded(player_id: String, player_name: String):
+    print("Player info loaded: ", player_name)
 
 func _on_sign_in_button_pressed():
     play_games.signIn()
@@ -112,11 +129,11 @@ func _on_sign_in_button_pressed():
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `helloWorld()` | String | Test method, returns greeting |
+| `helloWorld()` | String | Test method, returns "Hello from PlayGamesPlugin v2!" |
 | `signIn()` | void | Trigger manual sign-in UI |
 | `signOut()` | void | No-op (v2 handles via OS settings) |
 | `isSignedIn()` | bool | Check current auth status |
-| `refreshAuthStatus()` | void | Re-check auth (call on resume) |
+| `refreshAuthStatus()` | void | Re-check auth (call on app resume) |
 | `getPlayerId()` | String | Get player's unique ID |
 | `getPlayerDisplayName()` | String | Get player's display name |
 
@@ -124,14 +141,22 @@ func _on_sign_in_button_pressed():
 
 | Signal | Parameters | Description |
 |--------|------------|-------------|
-| `sign_in_success` | player_id: String, player_name: String | Emitted on successful sign-in |
+| `sign_in_success` | player_id: String, player_name: String | Emitted on successful manual sign-in |
 | `sign_in_failed` | none | Emitted when sign-in fails/declined |
-| `player_info_loaded` | player_id: String, player_name: String | Emitted when player info is loaded |
+| `player_info_loaded` | player_id: String, player_name: String | Emitted when player info is loaded (auto sign-in) |
 
 ## Configuration
 
-### Minimum SDK
-Android API level 24 (Android 7.0) or higher.
+### SDK Versions
+
+| Component | Version |
+|-----------|---------|
+| Compile SDK | 35 |
+| Min SDK | 24 (Android 7.0) |
+| Target SDK | 35 |
+| Play Games SDK | 21.0.0 |
+| Godot Library | 4.5.1.stable |
+| JDK | 17 |
 
 ### Permissions (Automatic)
 - `INTERNET` - Required for Play Games Services
@@ -141,24 +166,66 @@ Android API level 24 (Android 7.0) or higher.
 
 1. Go to [Google Play Console](https://play.google.com/console)
 2. Select your app → **Play Games Services** → **Setup and management** → **Configuration**
-3. Copy the numeric **Project ID** (not the OAuth client ID)
+3. Copy the numeric **Project ID** (12+ digits, not the OAuth client ID)
 
 ## Troubleshooting
 
-### Plugin Not Found in Godot
-- Ensure `plugin.cfg` and `play_games_plugin.gd` are in `addons/play_games_plugin/`
-- Check that the plugin is enabled in Project Settings → Plugins
-- Verify AAR files are present in the same folder
+### Plugin Singleton Not Found on Android
+
+This is the most common issue. Check the following:
+
+1. **AndroidManifest.xml must have v2 plugin registration:**
+   ```xml
+   <application>
+       <meta-data
+           android:name="org.godotengine.plugin.v2.PlayGamesPlugin"
+           android:value="com.mladenstojanovic.playgamesplugin.PlayGamesPlugin" />
+   </application>
+   ```
+
+2. **AAR files must be in the correct location** with correct names:
+   - `addons/play_games_plugin/PlayGamesPlugin-debug.aar`
+   - `addons/play_games_plugin/PlayGamesPlugin-release.aar`
+
+3. **Plugin must be enabled** in Project Settings → Plugins
+
+4. **Android Build Template must be installed** (Project → Install Android Build Template)
 
 ### Sign-in Always Fails
+
 - Verify your App ID is correct in `play_games_plugin.gd`
 - Check that your app's SHA-1 fingerprint is registered in Play Console
 - Ensure Play Games Services is properly configured in Play Console
-- Check logcat for detailed error messages: `adb logcat | grep PlayGames`
+- Check logcat for detailed error messages:
+  ```bash
+  adb logcat | grep -E "(PlayGames|GamesSignIn)"
+  ```
+
+### Common Logcat Errors
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `DEVELOPER_ERROR` | SHA-1 mismatch or wrong App ID | Register debug/release SHA-1 in Play Console |
+| `SIGN_IN_REQUIRED` | User hasn't signed in before | Call `signIn()` to show sign-in UI |
+| `NETWORK_ERROR` | No internet connection | Check device connectivity |
 
 ### "Play Games Services not available"
+
 - Device must have Google Play Services installed
-- Some emulators don't include Play Services
+- Some emulators don't include Play Services (use a physical device)
+
+### Resource Linking Errors (attr/colorPrimary, etc.)
+
+If you see errors about missing Material Components resources:
+- The AAR should NOT include Material Components resources
+- Rebuild the plugin with `compileOnly` dependencies (not `implementation`)
+- Current build.gradle.kts uses:
+  ```kotlin
+  dependencies {
+      compileOnly("org.godotengine:godot:4.5.1.stable")
+      compileOnly("com.google.android.gms:play-services-games-v2:21.0.0")
+  }
+  ```
 
 ## Roadmap
 
@@ -178,6 +245,7 @@ Android API level 24 (Android 7.0) or higher.
 - [Android Sign-in Documentation](https://developer.android.com/games/pgs/android/android-signin)
 - [Godot Android Plugin Documentation](https://docs.godotengine.org/en/stable/tutorials/platform/android/android_plugin.html)
 - [Google Play Console](https://play.google.com/console)
+- [Godot Android Plugin Template](https://github.com/m4gr3d/Godot-Android-Plugin-Template)
 
 ## License
 
