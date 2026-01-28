@@ -17,6 +17,14 @@ func _ready():
 		play_games.sign_in_failed.connect(_on_sign_in_failed)
 		play_games.player_info_loaded.connect(_on_player_info_loaded)
 
+		# Cloud Save signals
+		play_games.save_game_success.connect(_on_save_game_success)
+		play_games.save_game_failed.connect(_on_save_game_failed)
+		play_games.load_game_success.connect(_on_load_game_success)
+		play_games.load_game_failed.connect(_on_load_game_failed)
+		play_games.delete_game_success.connect(_on_delete_game_success)
+		play_games.delete_game_failed.connect(_on_delete_game_failed)
+
 		# Test the plugin
 		print("Plugin says: ", play_games.helloWorld())
 
@@ -146,3 +154,44 @@ func _on_show_leaderboard_pressed():
 	"""Connect this to your Leaderboard button"""
 	# Future: play_games.showLeaderboardUI("leaderboard_id")
 	print("Leaderboards UI not yet implemented")
+
+
+# ==================== Cloud Save ====================
+
+func _on_save_game_success(save_name: String):
+	print("Game saved successfully: ", save_name)
+
+func _on_save_game_failed(save_name: String, status_code: int, message: String):
+	print("Save failed [", save_name, "]: ", status_code, " - ", message)
+
+func _on_load_game_success(save_name: String, data: String):
+	print("Game loaded [", save_name, "]: ", data)
+	var parsed = JSON.parse_string(data)
+	if parsed:
+		print("HP: ", parsed.get("hp", 0))
+		print("Level: ", parsed.get("level", 1))
+
+func _on_load_game_failed(save_name: String, status_code: int, message: String):
+	print("Load failed [", save_name, "]: ", status_code, " - ", message)
+
+func _on_delete_game_success(save_name: String):
+	print("Save deleted: ", save_name)
+
+func _on_delete_game_failed(save_name: String, status_code: int, message: String):
+	print("Delete failed [", save_name, "]: ", status_code, " - ", message)
+
+func save_player_state(hp: int, level: int, gold: int):
+	"""Example: Save player state to cloud"""
+	if play_games and play_games.isSignedIn():
+		var data = JSON.stringify({"hp": hp, "level": level, "gold": gold})
+		play_games.saveGame("autosave", data, "Autosave - Level %d" % level)
+
+func load_player_state():
+	"""Example: Load player state from cloud"""
+	if play_games and play_games.isSignedIn():
+		play_games.loadGame("autosave")
+
+func delete_save():
+	"""Example: Delete a save slot"""
+	if play_games and play_games.isSignedIn():
+		play_games.deleteGame("autosave")

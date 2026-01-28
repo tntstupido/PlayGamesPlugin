@@ -15,6 +15,7 @@ This plugin integrates Google Play Games Services into Godot games using the mod
 | Automatic Sign-in | ✅ | Users are signed in automatically at app launch |
 | Manual Sign-in | ✅ | Trigger sign-in for users who declined initially |
 | Player Info | ✅ | Get player ID and display name |
+| Cloud Save | ✅ | Save/load/delete game data via Snapshots API |
 | Signals | ✅ | Async events via Godot signals |
 | Achievements | ⏳ | Planned for v1.1 |
 | Leaderboards | ⏳ | Planned for v2.0 |
@@ -123,6 +124,37 @@ func _on_sign_in_button_pressed():
     play_games.signIn()
 ```
 
+### Cloud Save Example
+
+```gdscript
+func _ready():
+    # ... after getting the singleton ...
+    play_games.save_game_success.connect(_on_save_game_success)
+    play_games.save_game_failed.connect(_on_save_game_failed)
+    play_games.load_game_success.connect(_on_load_game_success)
+    play_games.load_game_failed.connect(_on_load_game_failed)
+
+func save_player_state():
+    var data = JSON.stringify({"hp": 85, "level": 12, "gold": 500})
+    play_games.saveGame("autosave", data, "Autosave - Level 12")
+
+func load_player_state():
+    play_games.loadGame("autosave")
+
+func _on_save_game_success(save_name: String):
+    print("Saved: ", save_name)
+
+func _on_save_game_failed(save_name: String, status_code: int, message: String):
+    print("Save failed: ", message)
+
+func _on_load_game_success(save_name: String, data: String):
+    var state = JSON.parse_string(data)
+    print("HP: ", state.get("hp", 100))
+
+func _on_load_game_failed(save_name: String, status_code: int, message: String):
+    print("Load failed: ", message)
+```
+
 ## API Reference
 
 ### Methods
@@ -136,6 +168,9 @@ func _on_sign_in_button_pressed():
 | `refreshAuthStatus()` | void | Re-check auth (call on app resume) |
 | `getPlayerId()` | String | Get player's unique ID |
 | `getPlayerDisplayName()` | String | Get player's display name |
+| `saveGame(saveName, data, description)` | void | Save data to a named cloud snapshot |
+| `loadGame(saveName)` | void | Load data from a named cloud snapshot |
+| `deleteGame(saveName)` | void | Delete a cloud snapshot |
 
 ### Signals
 
@@ -144,6 +179,12 @@ func _on_sign_in_button_pressed():
 | `sign_in_success` | player_id: String, player_name: String | Emitted on successful manual sign-in |
 | `sign_in_failed` | none | Emitted when sign-in fails/declined |
 | `player_info_loaded` | player_id: String, player_name: String | Emitted when player info is loaded (auto sign-in) |
+| `save_game_success` | save_name: String | Emitted when cloud save succeeds |
+| `save_game_failed` | save_name: String, status_code: int, message: String | Emitted when cloud save fails |
+| `load_game_success` | save_name: String, data: String | Emitted when cloud load succeeds (data is the saved string) |
+| `load_game_failed` | save_name: String, status_code: int, message: String | Emitted when cloud load fails |
+| `delete_game_success` | save_name: String | Emitted when cloud delete succeeds |
+| `delete_game_failed` | save_name: String, status_code: int, message: String | Emitted when cloud delete fails |
 
 ## Configuration
 
@@ -234,7 +275,7 @@ If you see errors about missing Material Components resources:
 - `incrementAchievement(id, steps)`
 - `showAchievementsUI()`
 
-### v2.0 - Leaderboards
+### v1.2 - Leaderboards
 - `submitScore(leaderboardId, score)`
 - `showLeaderboardUI(leaderboardId)`
 - `showAllLeaderboardsUI()`

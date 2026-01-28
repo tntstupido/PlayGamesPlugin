@@ -3,9 +3,12 @@ package com.mladenstojanovic.playgamesplugin
 import android.app.Activity
 import android.util.Log
 import android.view.View
+import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.games.GamesSignInClient
 import com.google.android.gms.games.PlayGames
 import com.google.android.gms.games.PlayGamesSdk
+import com.google.android.gms.games.SnapshotsClient
+import com.google.android.gms.games.snapshot.SnapshotMetadataChange
 import org.godotengine.godot.Godot
 import org.godotengine.godot.plugin.GodotPlugin
 import org.godotengine.godot.plugin.SignalInfo
@@ -31,6 +34,36 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
     private var currentPlayerId: String = ""
     private var currentPlayerName: String = ""
 
+    private fun getApiExceptionInfo(exception: Exception?): Pair<Int, String> {
+        if (exception == null) {
+            return Pair(-1, "Unknown error")
+        }
+        val apiException = exception as? ApiException
+        return if (apiException != null) {
+            Pair(apiException.statusCode, apiException.message ?: "ApiException")
+        } else {
+            Pair(-1, "${exception.javaClass.simpleName}: ${exception.message}")
+        }
+    }
+
+    private fun logTaskFailure(context: String, exception: Exception?, isCanceled: Boolean = false) {
+        if (isCanceled) {
+            Log.e(TAG, "$context failed: canceled by user")
+            return
+        }
+        if (exception == null) {
+            Log.e(TAG, "$context failed with null exception")
+            return
+        }
+        val apiException = exception as? ApiException
+        if (apiException != null) {
+            Log.e(TAG, "$context failed: statusCode=${apiException.statusCode}, message=${apiException.message}", apiException)
+        } else {
+            Log.e(TAG, "$context failed: ${exception.javaClass.simpleName}: ${exception.message}", exception)
+        }
+    }
+
+
     override fun getPluginName(): String {
         return "PlayGamesPlugin"
     }
@@ -38,8 +71,15 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
     override fun getPluginSignals(): Set<SignalInfo> {
         return setOf(
             SignalInfo("sign_in_success", String::class.java, String::class.java),
-            SignalInfo("sign_in_failed"),
-            SignalInfo("player_info_loaded", String::class.java, String::class.java)
+            SignalInfo("sign_in_failed", Int::class.java, String::class.java),
+            SignalInfo("player_info_loaded", String::class.java, String::class.java),
+            // Cloud Save signals
+            SignalInfo("save_game_success", String::class.java),
+            SignalInfo("save_game_failed", String::class.java, Int::class.java, String::class.java),
+            SignalInfo("load_game_success", String::class.java, String::class.java),
+            SignalInfo("load_game_failed", String::class.java, Int::class.java, String::class.java),
+            SignalInfo("delete_game_success", String::class.java),
+            SignalInfo("delete_game_failed", String::class.java, Int::class.java, String::class.java)
         )
     }
 
@@ -67,8 +107,13 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
             isAuthenticated = task.isSuccessful && task.result.isAuthenticated
             Log.d(TAG, "Authentication check: $isAuthenticated")
 
-            if (isAuthenticated) {
-                loadPlayerInfo()
+            if (task.isSuccessful) {
+                if (isAuthenticated) {
+                    loadPlayerInfo()
+                }
+            } else {
+                Log.d(TAG, "Authentication check failed: successful=${task.isSuccessful}, canceled=${task.isCanceled}, exception=${task.exception}")
+                logTaskFailure("Authentication check", task.exception, task.isCanceled)
             }
         }
     }
@@ -108,7 +153,9 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
         Log.d(TAG, "SignIn called")
 
         gamesSignInClient?.signIn()?.addOnCompleteListener { task ->
-            if (task.isSuccessful && task.result.isAuthenticated) {
+            val result = task.result
+            Log.d(TAG, "Sign in task: successful=${task.isSuccessful}, canceled=${task.isCanceled}, resultAuth=${result?.isAuthenticated}")
+            if (task.isSuccessful && result != null && result.isAuthenticated) {
                 isAuthenticated = true
                 Log.d(TAG, "Sign in successful")
                 loadPlayerInfo()
@@ -117,9 +164,15 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
                 }
             } else {
                 isAuthenticated = false
-                Log.e(TAG, "Sign in failed", task.exception)
+                val isCanceled = task.isCanceled
+                val (statusCode, message) = if (isCanceled) {
+                    Pair(-2, "Canceled")
+                } else {
+                    getApiExceptionInfo(task.exception)
+                }
+                logTaskFailure("Sign in", task.exception, isCanceled)
                 getActivity()?.runOnUiThread {
-                    emitSignal("sign_in_failed")
+                    emitSignal("sign_in_failed", statusCode, message)
                 }
             }
         }
@@ -172,5 +225,143 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
     @UsedByGodot
     fun getPlayerDisplayName(): String {
         return currentPlayerName
+    }
+
+    // ==================== Cloud Save (Snapshots) ====================
+
+    /**
+     * Save game data to a named snapshot.
+     * @param saveName Unique name for the save slot (e.g. "slot1", "autosave")
+     * @param data The data to save (e.g. JSON string)
+     * @param description Human-readable description shown in Play Games UI
+     */
+    @UsedByGodot
+    fun saveGame(saveName: String, data: String, description: String) {
+        Log.d(TAG, "saveGame called: saveName=$saveName")
+        val activity = getActivity() ?: run {
+            emitSignal("save_game_failed", saveName, -1, "Activity not available")
+            return
+        }
+
+        val snapshotsClient = PlayGames.getSnapshotsClient(activity)
+        snapshotsClient.open(saveName, true, SnapshotsClient.RESOLUTION_POLICY_MOST_RECENTLY_MODIFIED)
+            .addOnCompleteListener { openTask ->
+                if (!openTask.isSuccessful) {
+                    val (code, msg) = getApiExceptionInfo(openTask.exception)
+                    logTaskFailure("saveGame open", openTask.exception, openTask.isCanceled)
+                    activity.runOnUiThread { emitSignal("save_game_failed", saveName, code, msg) }
+                    return@addOnCompleteListener
+                }
+
+                val dataOrConflict = openTask.result
+                if (!dataOrConflict.isConflict) {
+                    val snapshot = dataOrConflict.data!!
+                    snapshot.snapshotContents.writeBytes(data.toByteArray(Charsets.UTF_8))
+
+                    val metadataChange = SnapshotMetadataChange.Builder()
+                        .setDescription(description)
+                        .build()
+
+                    snapshotsClient.commitAndClose(snapshot, metadataChange)
+                        .addOnCompleteListener { commitTask ->
+                            if (commitTask.isSuccessful) {
+                                Log.d(TAG, "saveGame success: $saveName")
+                                activity.runOnUiThread { emitSignal("save_game_success", saveName) }
+                            } else {
+                                val (code, msg) = getApiExceptionInfo(commitTask.exception)
+                                logTaskFailure("saveGame commit", commitTask.exception, commitTask.isCanceled)
+                                activity.runOnUiThread { emitSignal("save_game_failed", saveName, code, msg) }
+                            }
+                        }
+                } else {
+                    // Conflict resolved automatically by RESOLUTION_POLICY_MOST_RECENTLY_MODIFIED
+                    Log.w(TAG, "saveGame: unexpected conflict for $saveName")
+                    activity.runOnUiThread { emitSignal("save_game_failed", saveName, -1, "Unexpected conflict") }
+                }
+            }
+    }
+
+    /**
+     * Load game data from a named snapshot.
+     * @param saveName The name of the save slot to load
+     */
+    @UsedByGodot
+    fun loadGame(saveName: String) {
+        Log.d(TAG, "loadGame called: saveName=$saveName")
+        val activity = getActivity() ?: run {
+            emitSignal("load_game_failed", saveName, -1, "Activity not available")
+            return
+        }
+
+        val snapshotsClient = PlayGames.getSnapshotsClient(activity)
+        snapshotsClient.open(saveName, false, SnapshotsClient.RESOLUTION_POLICY_MOST_RECENTLY_MODIFIED)
+            .addOnCompleteListener { openTask ->
+                if (!openTask.isSuccessful) {
+                    val (code, msg) = getApiExceptionInfo(openTask.exception)
+                    logTaskFailure("loadGame open", openTask.exception, openTask.isCanceled)
+                    activity.runOnUiThread { emitSignal("load_game_failed", saveName, code, msg) }
+                    return@addOnCompleteListener
+                }
+
+                val dataOrConflict = openTask.result
+                if (!dataOrConflict.isConflict) {
+                    val snapshot = dataOrConflict.data!!
+                    val bytes = snapshot.snapshotContents.readFully()
+                    val gameData = String(bytes, Charsets.UTF_8)
+
+                    snapshotsClient.discardAndClose(snapshot)
+
+                    Log.d(TAG, "loadGame success: $saveName (${bytes.size} bytes)")
+                    activity.runOnUiThread { emitSignal("load_game_success", saveName, gameData) }
+                } else {
+                    Log.w(TAG, "loadGame: unexpected conflict for $saveName")
+                    activity.runOnUiThread { emitSignal("load_game_failed", saveName, -1, "Unexpected conflict") }
+                }
+            }
+    }
+
+    /**
+     * Delete a saved game snapshot.
+     * @param saveName The name of the save slot to delete
+     */
+    @UsedByGodot
+    fun deleteGame(saveName: String) {
+        Log.d(TAG, "deleteGame called: saveName=$saveName")
+        val activity = getActivity() ?: run {
+            emitSignal("delete_game_failed", saveName, -1, "Activity not available")
+            return
+        }
+
+        val snapshotsClient = PlayGames.getSnapshotsClient(activity)
+        snapshotsClient.open(saveName, false, SnapshotsClient.RESOLUTION_POLICY_MOST_RECENTLY_MODIFIED)
+            .addOnCompleteListener { openTask ->
+                if (!openTask.isSuccessful) {
+                    val (code, msg) = getApiExceptionInfo(openTask.exception)
+                    logTaskFailure("deleteGame open", openTask.exception, openTask.isCanceled)
+                    activity.runOnUiThread { emitSignal("delete_game_failed", saveName, code, msg) }
+                    return@addOnCompleteListener
+                }
+
+                val dataOrConflict = openTask.result
+                if (!dataOrConflict.isConflict) {
+                    val snapshot = dataOrConflict.data!!
+                    val metadata = snapshot.metadata
+
+                    snapshotsClient.delete(metadata)
+                        .addOnCompleteListener { deleteTask ->
+                            if (deleteTask.isSuccessful) {
+                                Log.d(TAG, "deleteGame success: $saveName")
+                                activity.runOnUiThread { emitSignal("delete_game_success", saveName) }
+                            } else {
+                                val (code, msg) = getApiExceptionInfo(deleteTask.exception)
+                                logTaskFailure("deleteGame delete", deleteTask.exception, deleteTask.isCanceled)
+                                activity.runOnUiThread { emitSignal("delete_game_failed", saveName, code, msg) }
+                            }
+                        }
+                } else {
+                    Log.w(TAG, "deleteGame: unexpected conflict for $saveName")
+                    activity.runOnUiThread { emitSignal("delete_game_failed", saveName, -1, "Unexpected conflict") }
+                }
+            }
     }
 }

@@ -101,6 +101,52 @@ PlayGames.getPlayersClient(activity).currentPlayer
     }
 ```
 
+### Cloud Save (Snapshots)
+
+```kotlin
+// Get snapshots client
+val snapshotsClient = PlayGames.getSnapshotsClient(activity)
+
+// Open a snapshot (create if it doesn't exist)
+snapshotsClient.open("save_name", true, SnapshotsClient.RESOLUTION_POLICY_MOST_RECENTLY_MODIFIED)
+    .addOnCompleteListener { task ->
+        val dataOrConflict = task.result
+        if (!dataOrConflict.isConflict) {
+            val snapshot = dataOrConflict.data!!
+
+            // Write data
+            snapshot.snapshotContents.writeBytes(data.toByteArray(Charsets.UTF_8))
+
+            // Commit with metadata
+            val metadataChange = SnapshotMetadataChange.Builder()
+                .setDescription("Save description")
+                .build()
+            snapshotsClient.commitAndClose(snapshot, metadataChange)
+        }
+    }
+
+// Read data from snapshot
+snapshotsClient.open("save_name", false, SnapshotsClient.RESOLUTION_POLICY_MOST_RECENTLY_MODIFIED)
+    .addOnCompleteListener { task ->
+        val snapshot = task.result.data!!
+        val bytes = snapshot.snapshotContents.readFully()
+        val gameData = String(bytes, Charsets.UTF_8)
+        snapshotsClient.discardAndClose(snapshot)
+    }
+
+// Delete snapshot
+snapshotsClient.open("save_name", false, SnapshotsClient.RESOLUTION_POLICY_MOST_RECENTLY_MODIFIED)
+    .addOnCompleteListener { task ->
+        val snapshot = task.result.data!!
+        snapshotsClient.delete(snapshot.metadata)
+    }
+```
+
+**Conflict Resolution Policies:**
+- `RESOLUTION_POLICY_MOST_RECENTLY_MODIFIED` — keeps the newest save (default)
+- `RESOLUTION_POLICY_LONGEST_PLAYTIME` — keeps the save with longest playtime
+- `RESOLUTION_POLICY_MANUAL` — requires manual conflict resolution
+
 ### Achievements (To Implement)
 
 ```kotlin
@@ -319,7 +365,11 @@ adb logcat | grep godot
 
 ## Version History
 
-### v1.0.0 (Current)
+### v1.0.1 (Current)
+- Cloud Save (Snapshots API): save, load, delete game data
+- All Cloud Save operations with async signals
+
+### v1.0.0
 - Play Games Services v2 integration
 - Automatic sign-in
 - Manual sign-in
@@ -329,9 +379,8 @@ adb logcat | grep godot
 ### Planned: v1.1.0
 - Achievements support
 
-### Planned: v2.0.0
+### Planned: v1.2.0
 - Leaderboards support
-- Saved Games (optional)
 
 ## Resources
 
@@ -346,6 +395,7 @@ adb logcat | grep godot
 
 - [GamesSignInClient](https://developers.google.com/android/reference/com/google/android/gms/games/GamesSignInClient)
 - [PlayersClient](https://developers.google.com/android/reference/com/google/android/gms/games/PlayersClient)
+- [SnapshotsClient](https://developers.google.com/android/reference/com/google/android/gms/games/SnapshotsClient)
 - [AchievementsClient](https://developers.google.com/android/reference/com/google/android/gms/games/AchievementsClient)
 - [LeaderboardsClient](https://developers.google.com/android/reference/com/google/android/gms/games/LeaderboardsClient)
 
