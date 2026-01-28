@@ -26,3 +26,4 @@ app/build/
 
 # Deprecated v1 plugin files
 *.gdap
+godot-plugin/
