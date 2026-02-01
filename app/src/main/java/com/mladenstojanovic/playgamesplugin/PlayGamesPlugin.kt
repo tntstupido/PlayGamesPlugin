@@ -7,6 +7,9 @@ import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.games.GamesSignInClient
 import com.google.android.gms.games.PlayGames
 import com.google.android.gms.games.PlayGamesSdk
+import com.google.android.gms.games.leaderboard.LeaderboardVariant
+import org.json.JSONArray
+import org.json.JSONObject
 import com.google.android.gms.games.SnapshotsClient
 import com.google.android.gms.games.snapshot.SnapshotMetadataChange
 import org.godotengine.godot.Godot
@@ -79,7 +82,14 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
             SignalInfo("load_game_success", String::class.java, String::class.java),
             SignalInfo("load_game_failed", String::class.java, Int::class.java, String::class.java),
             SignalInfo("delete_game_success", String::class.java),
-            SignalInfo("delete_game_failed", String::class.java, Int::class.java, String::class.java)
+            SignalInfo("delete_game_failed", String::class.java, Int::class.java, String::class.java),
+            // Leaderboard signals
+            SignalInfo("leaderboard_submit_success", String::class.java),
+            SignalInfo("leaderboard_submit_failed", String::class.java, Int::class.java, String::class.java),
+            SignalInfo("leaderboard_top_scores_loaded", String::class.java, String::class.java),
+            SignalInfo("leaderboard_top_scores_failed", String::class.java, Int::class.java, String::class.java),
+            SignalInfo("leaderboard_player_score_loaded", String::class.java, String::class.java),
+            SignalInfo("leaderboard_player_score_failed", String::class.java, Int::class.java, String::class.java)
         )
     }
 
@@ -133,6 +143,32 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
                     Log.e(TAG, "Failed to load player info", task.exception)
                 }
             }
+    }
+
+    private fun parseTimeSpan(value: String): Int {
+        return when (value.lowercase()) {
+            "daily" -> LeaderboardVariant.TIME_SPAN_DAILY
+            "weekly" -> LeaderboardVariant.TIME_SPAN_WEEKLY
+            else -> LeaderboardVariant.TIME_SPAN_ALL_TIME
+        }
+    }
+
+    private fun parseCollection(value: String): Int {
+        return when (value.lowercase()) {
+            "friends" -> LeaderboardVariant.COLLECTION_FRIENDS
+            else -> LeaderboardVariant.COLLECTION_PUBLIC
+        }
+    }
+
+    private fun buildScoreJson(score: com.google.android.gms.games.leaderboard.LeaderboardScore): JSONObject {
+        val obj = JSONObject()
+        obj.put("rank", score.rank)
+        obj.put("score", score.rawScore)
+        obj.put("display_name", score.scoreHolderDisplayName)
+        val playerId = score.scoreHolder?.playerId ?: ""
+        obj.put("player_id", playerId)
+        obj.put("is_player", playerId == currentPlayerId)
+        return obj
     }
 
     /**
@@ -361,6 +397,98 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
                 } else {
                     Log.w(TAG, "deleteGame: unexpected conflict for $saveName")
                     activity.runOnUiThread { emitSignal("delete_game_failed", saveName, -1, "Unexpected conflict") }
+                }
+            }
+    }
+
+    // ==================== Leaderboards ====================
+
+    @UsedByGodot
+    fun submitScore(leaderboardId: String, score: Long) {
+        Log.d(TAG, "submitScore called: leaderboardId=$leaderboardId, score=$score")
+        val activity = getActivity() ?: run {
+            emitSignal("leaderboard_submit_failed", leaderboardId, -1, "Activity not available")
+            return
+        }
+
+        PlayGames.getLeaderboardsClient(activity)
+            .submitScoreImmediate(leaderboardId, score)
+            .addOnCompleteListener { task ->
+                if (task.isSuccessful) {
+                    activity.runOnUiThread { emitSignal("leaderboard_submit_success", leaderboardId) }
+                } else {
+                    val (code, msg) = getApiExceptionInfo(task.exception)
+                    logTaskFailure("submitScore", task.exception, task.isCanceled)
+                    activity.runOnUiThread { emitSignal("leaderboard_submit_failed", leaderboardId, code, msg) }
+                }
+            }
+    }
+
+    @UsedByGodot
+    fun loadTopScores(leaderboardId: String, timeSpan: String, collection: String, maxResults: Int, forceReload: Boolean) {
+        Log.d(TAG, "loadTopScores called: leaderboardId=$leaderboardId")
+        val activity = getActivity() ?: run {
+            emitSignal("leaderboard_top_scores_failed", leaderboardId, -1, "Activity not available")
+            return
+        }
+
+        val timeSpanConst = parseTimeSpan(timeSpan)
+        val collectionConst = parseCollection(collection)
+
+        PlayGames.getLeaderboardsClient(activity)
+            .loadTopScores(leaderboardId, timeSpanConst, collectionConst, maxResults, forceReload)
+            .addOnCompleteListener { task ->
+                if (task.isSuccessful) {
+                    val annotated = task.result
+                    val scores = annotated.get()
+                    val buffer = scores?.getScores()
+                    val arr = JSONArray()
+                    if (buffer != null) {
+                        for (score in buffer) {
+                            arr.put(buildScoreJson(score))
+                        }
+                        buffer.release()
+                    }
+                    val payload = JSONObject()
+                    payload.put("leaderboard_id", leaderboardId)
+                    payload.put("scores", arr)
+                    activity.runOnUiThread { emitSignal("leaderboard_top_scores_loaded", leaderboardId, payload.toString()) }
+                } else {
+                    val (code, msg) = getApiExceptionInfo(task.exception)
+                    logTaskFailure("loadTopScores", task.exception, task.isCanceled)
+                    activity.runOnUiThread { emitSignal("leaderboard_top_scores_failed", leaderboardId, code, msg) }
+                }
+            }
+    }
+
+    @UsedByGodot
+    fun loadPlayerScore(leaderboardId: String, timeSpan: String, collection: String, forceReload: Boolean) {
+        Log.d(TAG, "loadPlayerScore called: leaderboardId=$leaderboardId")
+        val activity = getActivity() ?: run {
+            emitSignal("leaderboard_player_score_failed", leaderboardId, -1, "Activity not available")
+            return
+        }
+
+        val timeSpanConst = parseTimeSpan(timeSpan)
+        val collectionConst = parseCollection(collection)
+
+        PlayGames.getLeaderboardsClient(activity)
+            .loadCurrentPlayerLeaderboardScore(leaderboardId, timeSpanConst, collectionConst)
+            .addOnCompleteListener { task ->
+                if (task.isSuccessful) {
+                    val annotated = task.result
+                    val score = annotated.get()
+                    if (score != null) {
+                        val payload = buildScoreJson(score)
+                        payload.put("leaderboard_id", leaderboardId)
+                        activity.runOnUiThread { emitSignal("leaderboard_player_score_loaded", leaderboardId, payload.toString()) }
+                    } else {
+                        activity.runOnUiThread { emitSignal("leaderboard_player_score_failed", leaderboardId, -1, "No player score") }
+                    }
+                } else {
+                    val (code, msg) = getApiExceptionInfo(task.exception)
+                    logTaskFailure("loadPlayerScore", task.exception, task.isCanceled)
+                    activity.runOnUiThread { emitSignal("leaderboard_player_score_failed", leaderboardId, code, msg) }
                 }
             }
     }

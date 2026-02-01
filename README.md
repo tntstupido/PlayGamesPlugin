@@ -18,7 +18,7 @@ This plugin integrates Google Play Games Services into Godot games using the mod
 | Cloud Save | ✅ | Save/load/delete game data via Snapshots API |
 | Signals | ✅ | Async events via Godot signals |
 | Achievements | ⏳ | Planned for v1.1 |
-| Leaderboards | ⏳ | Planned for v2.0 |
+| Leaderboards | ✅ | Submit scores + load top scores + player rank |
 
 ### Play Games Services v2 Benefits
 
@@ -124,6 +124,53 @@ func _on_sign_in_button_pressed():
     play_games.signIn()
 ```
 
+
+### Leaderboard Example
+
+```gdscript
+func submit_score(score: int):
+    if play_games and play_games.isSignedIn():
+        play_games.submitScore("leaderboard_id", score)
+
+func load_daily_leaderboard():
+    play_games.loadTopScores("leaderboard_id", "daily", "public", 10, true)
+    play_games.loadPlayerScore("leaderboard_id", "daily", "public", true)
+
+func _on_leaderboard_top_scores_loaded(leaderboard_id: String, json: String):
+    var data = JSON.parse_string(json)
+    print(data)
+```
+
+### Leaderboard JSON Format
+
+**Top Scores Payload:**
+```json
+{
+  "leaderboard_id": "leaderboard_id",
+  "scores": [
+    {
+      "rank": "1",
+      "score": 1234,
+      "display_name": "Player",
+      "player_id": "abc",
+      "is_player": false
+    }
+  ]
+}
+```
+
+**Player Score Payload:**
+```json
+{
+  "leaderboard_id": "leaderboard_id",
+  "rank": "12",
+  "score": 987,
+  "display_name": "You",
+  "player_id": "abc",
+  "is_player": true
+}
+```
+
 ### Cloud Save Example
 
 ```gdscript
@@ -171,6 +218,9 @@ func _on_load_game_failed(save_name: String, status_code: int, message: String):
 | `saveGame(saveName, data, description)` | void | Save data to a named cloud snapshot |
 | `loadGame(saveName)` | void | Load data from a named cloud snapshot |
 | `deleteGame(saveName)` | void | Delete a cloud snapshot |
+| `submitScore(leaderboardId, score)` | void | Submit score to a leaderboard |
+| `loadTopScores(leaderboardId, timeSpan, collection, maxResults, forceReload)` | void | Load top scores (returns JSON via signal) |
+| `loadPlayerScore(leaderboardId, timeSpan, collection, forceReload)` | void | Load current player score/rank (returns JSON via signal) |
 
 ### Signals
 
@@ -185,6 +235,12 @@ func _on_load_game_failed(save_name: String, status_code: int, message: String):
 | `load_game_failed` | save_name: String, status_code: int, message: String | Emitted when cloud load fails |
 | `delete_game_success` | save_name: String | Emitted when cloud delete succeeds |
 | `delete_game_failed` | save_name: String, status_code: int, message: String | Emitted when cloud delete fails |
+| `leaderboard_submit_success` | leaderboard_id: String | Emitted when score submit succeeds |
+| `leaderboard_submit_failed` | leaderboard_id: String, status_code: int, message: String | Emitted when score submit fails |
+| `leaderboard_top_scores_loaded` | leaderboard_id: String, json: String | Emitted with top scores JSON |
+| `leaderboard_top_scores_failed` | leaderboard_id: String, status_code: int, message: String | Emitted when top scores load fails |
+| `leaderboard_player_score_loaded` | leaderboard_id: String, json: String | Emitted with player score JSON |
+| `leaderboard_player_score_failed` | leaderboard_id: String, status_code: int, message: String | Emitted when player score load fails |
 
 ## Configuration
 
@@ -268,6 +324,13 @@ If you see errors about missing Material Components resources:
   }
   ```
 
+### Debug Builds: Sign-in/Leaderboard Failures
+
+If leaderboard calls crash or fail in **debug** builds:
+- Make sure your **debug keystore SHA-1** is added in Play Console → Play Games Services.
+- If the user is not signed in, leaderboard calls will fail. Guard with `isSignedIn()` in GDScript.
+- Physical device is recommended; some emulators don’t support Play Games sign-in.
+
 ## Roadmap
 
 ### v1.1 - Achievements
@@ -277,8 +340,8 @@ If you see errors about missing Material Components resources:
 
 ### v1.2 - Leaderboards
 - `submitScore(leaderboardId, score)`
-- `showLeaderboardUI(leaderboardId)`
-- `showAllLeaderboardsUI()`
+- `loadTopScores(leaderboardId, timeSpan, collection, maxResults, forceReload)`
+- `loadPlayerScore(leaderboardId, timeSpan, collection, forceReload)`
 
 ## Resources
 

@@ -80,6 +80,9 @@ const PLAY_GAMES_APP_ID = "123456789012"
 3. Navigate to: **Play Games Services** → **Setup and management** → **Configuration**
 4. Copy the numeric ID (12+ digits)
 
+**Debug keystore note (important for testing):**
+- Add the **debug keystore SHA-1** to Play Console → Play Games Services, or sign-in/leaderboards will fail in debug builds.
+
 ### Step 5: Enable the Plugin
 
 1. Open your Godot project

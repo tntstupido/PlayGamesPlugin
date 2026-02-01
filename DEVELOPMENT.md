@@ -166,7 +166,45 @@ PlayGames.getAchievementsClient(activity)
     }
 ```
 
-### Leaderboards (To Implement)
+### Leaderboards (Implemented)
+
+### Leaderboards (Custom UI)
+
+```kotlin
+// Submit score
+PlayGames.getLeaderboardsClient(activity)
+    .submitScoreImmediate("leaderboard_id", score)
+
+// Load top scores
+PlayGames.getLeaderboardsClient(activity)
+    .loadTopScores("leaderboard_id", LeaderboardVariant.TIME_SPAN_DAILY, LeaderboardVariant.COLLECTION_PUBLIC, 10, true)
+
+// Load current player score
+PlayGames.getLeaderboardsClient(activity)
+    .loadCurrentPlayerLeaderboardScore("leaderboard_id", LeaderboardVariant.TIME_SPAN_DAILY, LeaderboardVariant.COLLECTION_PUBLIC)
+```
+
+**JSON Payload Format (signals):**
+```json
+{
+  "leaderboard_id": "leaderboard_id",
+  "scores": [
+    {"rank": "1", "score": 1234, "display_name": "Player", "player_id": "abc", "is_player": false}
+  ]
+}
+```
+
+```json
+{
+  "leaderboard_id": "leaderboard_id",
+  "rank": "12",
+  "score": 987,
+  "display_name": "You",
+  "player_id": "abc",
+  "is_player": true
+}
+```
+
 
 ```kotlin
 // Submit score

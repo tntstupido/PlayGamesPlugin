@@ -17,6 +17,14 @@ func _ready():
 		play_games.sign_in_failed.connect(_on_sign_in_failed)
 		play_games.player_info_loaded.connect(_on_player_info_loaded)
 
+
+		# Leaderboard signals
+		play_games.leaderboard_submit_success.connect(_on_leaderboard_submit_success)
+		play_games.leaderboard_submit_failed.connect(_on_leaderboard_submit_failed)
+		play_games.leaderboard_top_scores_loaded.connect(_on_leaderboard_top_scores_loaded)
+		play_games.leaderboard_top_scores_failed.connect(_on_leaderboard_top_scores_failed)
+		play_games.leaderboard_player_score_loaded.connect(_on_leaderboard_player_score_loaded)
+		play_games.leaderboard_player_score_failed.connect(_on_leaderboard_player_score_failed)
 		# Cloud Save signals
 		play_games.save_game_success.connect(_on_save_game_success)
 		play_games.save_game_failed.connect(_on_save_game_failed)
@@ -152,8 +160,10 @@ func _on_show_achievements_pressed():
 
 func _on_show_leaderboard_pressed():
 	"""Connect this to your Leaderboard button"""
-	# Future: play_games.showLeaderboardUI("leaderboard_id")
-	print("Leaderboards UI not yet implemented")
+	# Load top 10 + player score for custom UI
+	play_games.loadTopScores("leaderboard_id", "daily", "public", 10, true)
+	play_games.loadPlayerScore("leaderboard_id", "daily", "public", true)
+
 
 
 # ==================== Cloud Save ====================
