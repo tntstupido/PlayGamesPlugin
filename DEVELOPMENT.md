@@ -241,6 +241,17 @@ fun myMethod(): String {
 
 **Note:** The old `getPluginMethods()` approach is deprecated. Use `@UsedByGodot` instead.
 
+### Naming Compatibility
+
+For better runtime compatibility across Godot integrations, expose both naming styles for frequently used methods:
+- camelCase (for Kotlin/Java style): `loadGame`, `saveGame`, `isSignedIn`
+- snake_case (for Godot style): `load_game`, `save_game`, `is_signed_in`
+
+Recommended pattern:
+1. Keep the primary implementation in one method (for example `loadGame`).
+2. Add `@UsedByGodot` alias wrappers (`load_game`) that delegate to the primary implementation.
+3. Document both names in `README.md`.
+
 ### Emitting Signals
 
 1. Declare signals in `getPluginSignals()`:
@@ -398,12 +409,22 @@ adb logcat | grep godot
 | `ClassNotFoundException` | Missing dependency | Check AAR includes all deps |
 | Signal not received | Wrong thread | Use `runOnUiThread { emitSignal() }` |
 | Method not found | Missing annotation | Add `@UsedByGodot` |
+| Method not found (intermittent) | Naming mismatch in integration layer | Expose both camelCase and snake_case aliases |
 | Singleton not found | Missing v2 registration | Add meta-data to AndroidManifest.xml |
 | Resource linking errors | Material Components in AAR | Use `compileOnly` instead of `implementation` |
 
 ## Version History
 
-### v1.0.1 (Current)
+### v1.1.1 (Current)
+- Added snake_case method aliases for auth/cloud API compatibility:
+  - `sign_in`, `sign_out`, `is_signed_in`, `refresh_auth_status`
+  - `save_game`, `load_game`, `delete_game`
+
+### v1.1.0
+- Leaderboard API and docs
+- Ready-to-use `godot-plugin/` folder with prebuilt AAR files
+
+### v1.0.1
 - Cloud Save (Snapshots API): save, load, delete game data
 - All Cloud Save operations with async signals
 
@@ -414,11 +435,8 @@ adb logcat | grep godot
 - Player info retrieval
 - Godot signals for async events
 
-### Planned: v1.1.0
-- Achievements support
-
 ### Planned: v1.2.0
-- Leaderboards support
+- Achievements support
 
 ## Resources
 

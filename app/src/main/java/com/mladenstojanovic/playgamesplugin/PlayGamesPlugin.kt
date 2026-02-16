@@ -215,6 +215,14 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
     }
 
     /**
+     * Snake_case alias for compatibility with integrations expecting Godot-style names.
+     */
+    @UsedByGodot
+    fun sign_in() {
+        signIn()
+    }
+
+    /**
      * Sign out is no longer supported in Play Games Services v2.
      * Account management is handled in OS settings.
      * This method is kept for API compatibility but does nothing.
@@ -223,6 +231,14 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
     fun signOut() {
         Log.d(TAG, "SignOut called - Note: signOut is deprecated in Play Games Services v2")
         // In v2, sign-out is handled by the OS settings, not by the app
+    }
+
+    /**
+     * Snake_case alias for compatibility with integrations expecting Godot-style names.
+     */
+    @UsedByGodot
+    fun sign_out() {
+        signOut()
     }
 
     /**
@@ -236,6 +252,14 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
     }
 
     /**
+     * Snake_case alias for compatibility with integrations expecting Godot-style names.
+     */
+    @UsedByGodot
+    fun is_signed_in(): Boolean {
+        return isSignedIn()
+    }
+
+    /**
      * Refresh authentication status asynchronously.
      * Call this in onResume to check if auth state changed while app was in background.
      */
@@ -243,6 +267,14 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
     fun refreshAuthStatus() {
         Log.d(TAG, "Refreshing auth status")
         checkAuthenticationStatus()
+    }
+
+    /**
+     * Snake_case alias for compatibility with integrations expecting Godot-style names.
+     */
+    @UsedByGodot
+    fun refresh_auth_status() {
+        refreshAuthStatus()
     }
 
     /**
@@ -318,6 +350,14 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
     }
 
     /**
+     * Snake_case alias for compatibility with integrations expecting Godot-style names.
+     */
+    @UsedByGodot
+    fun save_game(saveName: String, data: String, description: String) {
+        saveGame(saveName, data, description)
+    }
+
+    /**
      * Load game data from a named snapshot.
      * @param saveName The name of the save slot to load
      */
@@ -354,6 +394,14 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
                     activity.runOnUiThread { emitSignal("load_game_failed", saveName, -1, "Unexpected conflict") }
                 }
             }
+    }
+
+    /**
+     * Snake_case alias for compatibility with integrations expecting Godot-style names.
+     */
+    @UsedByGodot
+    fun load_game(saveName: String) {
+        loadGame(saveName)
     }
 
     /**
@@ -399,6 +447,14 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
                     activity.runOnUiThread { emitSignal("delete_game_failed", saveName, -1, "Unexpected conflict") }
                 }
             }
+    }
+
+    /**
+     * Snake_case alias for compatibility with integrations expecting Godot-style names.
+     */
+    @UsedByGodot
+    fun delete_game(saveName: String) {
+        deleteGame(saveName)
     }
 
     // ==================== Leaderboards ====================

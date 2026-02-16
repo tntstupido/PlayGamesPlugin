@@ -222,6 +222,23 @@ func _on_load_game_failed(save_name: String, status_code: int, message: String):
 | `loadTopScores(leaderboardId, timeSpan, collection, maxResults, forceReload)` | void | Load top scores (returns JSON via signal) |
 | `loadPlayerScore(leaderboardId, timeSpan, collection, forceReload)` | void | Load current player score/rank (returns JSON via signal) |
 
+Snake_case compatibility aliases are also exposed for integrations that prefer Godot-style naming:
+`sign_in`, `sign_out`, `is_signed_in`, `refresh_auth_status`, `save_game`, `load_game`, `delete_game`.
+
+### Method Naming Compatibility
+
+The plugin exposes both camelCase and snake_case for core auth/cloud methods:
+
+| camelCase | snake_case |
+|-----------|------------|
+| `signIn()` | `sign_in()` |
+| `signOut()` | `sign_out()` |
+| `isSignedIn()` | `is_signed_in()` |
+| `refreshAuthStatus()` | `refresh_auth_status()` |
+| `saveGame(...)` | `save_game(...)` |
+| `loadGame(...)` | `load_game(...)` |
+| `deleteGame(...)` | `delete_game(...)` |
+
 ### Signals
 
 | Signal | Parameters | Description |

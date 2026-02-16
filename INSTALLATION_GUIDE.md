@@ -154,6 +154,9 @@ v2 API changes:
 - `signOut()` is now a no-op (account management via OS settings)
 - Added signals: `sign_in_success`, `sign_in_failed`, `player_info_loaded`
 - Added `refreshAuthStatus()` for checking auth on resume
+- Added snake_case method aliases for compatibility with Godot-style integrations:
+  - `sign_in`, `sign_out`, `is_signed_in`, `refresh_auth_status`
+  - `save_game`, `load_game`, `delete_game`
 
 ## Troubleshooting
 
@@ -199,6 +202,14 @@ If you see errors like `attr/colorPrimary not found` or `Theme.MaterialComponent
 2. Verify SHA-1 fingerprint in Play Console matches your keystore
 3. Check logcat: `adb logcat | grep -E "(PlayGames|GamesSignIn)"`
 
+### Cloud Save Calls Log "Method Unavailable"
+
+If your game-side integration checks plugin methods by name, make sure your integration supports both naming styles:
+- camelCase: `loadGame`, `saveGame`, `deleteGame`, `isSignedIn`
+- snake_case: `load_game`, `save_game`, `delete_game`, `is_signed_in`
+
+Using both names as fallbacks in GDScript is recommended.
+
 ### Common Logcat Errors
 
 | Error | Solution |
@@ -215,7 +226,7 @@ If you see errors like `attr/colorPrimary not found` or `Theme.MaterialComponent
 name="PlayGamesPlugin"
 description="Google Play Games Services integration for Godot"
 author="Mladen Stojanovic"
-version="1.0.0"
+version="1.1.1"
 script="play_games_plugin.gd"
 ```
 
