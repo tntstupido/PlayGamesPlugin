@@ -56,6 +56,25 @@ PlayGamesPlugin/
 
 ## Quick Start
 
+### 0. Install From Release (No Build Required)
+
+If you just want to use the plugin, download the release bundle and copy the folder into your project:
+
+```bash
+# Example for v1.1.1
+unzip PlayGamesPlugin-v1.1.1-addons.zip
+cp -r play_games_plugin /path/to/your_project/addons/
+```
+
+Expected target structure:
+```
+your_project/addons/play_games_plugin/
+├── plugin.cfg
+├── play_games_plugin.gd
+├── PlayGamesPlugin-debug.aar
+└── PlayGamesPlugin-release.aar
+```
+
 ### 1. Build the Plugin
 
 ```bash
