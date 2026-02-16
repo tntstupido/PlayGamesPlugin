@@ -61,8 +61,8 @@ PlayGamesPlugin/
 If you just want to use the plugin, download the release bundle and copy the folder into your project:
 
 ```bash
-# Example for v1.1.1
-unzip PlayGamesPlugin-v1.1.1-addons.zip
+# Example for v1.1.2
+unzip PlayGamesPlugin-v1.1.2-addons.zip
 cp -r play_games_plugin /path/to/your_project/addons/
 ```
 
