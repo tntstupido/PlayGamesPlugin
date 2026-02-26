@@ -190,6 +190,12 @@ func _on_leaderboard_top_scores_loaded(leaderboard_id: String, json: String):
 }
 ```
 
+### Cloud Save Notes
+
+- Cloud Save methods require the user to be authenticated (`isSignedIn() == true`).
+- If called while signed out, the plugin now fails gracefully and emits `*_failed` with status code `-3` and message `"Not signed in"` (instead of triggering Play Games resolution UI unexpectedly).
+- Prefer waiting for `sign_in_success` or `player_info_loaded` before calling `loadGame`, `saveGame`, or `deleteGame`.
+
 ### Cloud Save Example
 
 ```gdscript
@@ -205,6 +211,8 @@ func save_player_state():
     play_games.saveGame("autosave", data, "Autosave - Level 12")
 
 func load_player_state():
+    if not play_games.isSignedIn():
+        return
     play_games.loadGame("autosave")
 
 func _on_save_game_success(save_name: String):

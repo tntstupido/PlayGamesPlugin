@@ -20,8 +20,9 @@ PlayGamesPlugin is a Godot 4.2+ Android plugin for Google Play Games Services v2
 2. For async operations, declare signals in `getPluginSignals()` and emit them via `activity.runOnUiThread { emitSignal(...) }`
 3. Use the existing `getApiExceptionInfo()` and `logTaskFailure()` helpers for error handling
 4. All Play Games API calls follow the pattern: `PlayGames.getXxxClient(activity).method().addOnCompleteListener { ... }`
-5. Update `example_plugin_usage.gd` with usage examples
-6. Update README.md (API Reference tables) and DEVELOPMENT.md
+5. For auth-required APIs (Snapshots, some Play Games operations), guard on plugin auth state and emit `*_failed` instead of triggering unexpected resolution flows when signed out
+6. Update `example_plugin_usage.gd` with usage examples
+7. Update README.md (API Reference tables) and DEVELOPMENT.md
 
 ### Signal Naming Convention
 
@@ -60,7 +61,7 @@ Build must succeed before any PR.
 
 - **Authentication**: automatic sign-in, manual sign-in, auth refresh
 - **Player Info**: player ID, display name
-- **Cloud Save**: save, load, delete game data via Snapshots API
+- **Cloud Save**: save, load, delete game data via Snapshots API (with signed-out guard that emits failure signals instead of calling snapshots APIs)
 
 ## Planned Features
 

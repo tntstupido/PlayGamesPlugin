@@ -66,6 +66,17 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
         }
     }
 
+    private fun ensureAuthenticatedForSnapshotOp(activity: Activity, failureSignal: String, saveName: String, operation: String): Boolean {
+        if (isAuthenticated) {
+            return true
+        }
+        Log.w(TAG, "$operation blocked: user not authenticated")
+        activity.runOnUiThread {
+            emitSignal(failureSignal, saveName, -3L, "Not signed in")
+        }
+        return false
+    }
+
 
     override fun getPluginName(): String {
         return "PlayGamesPlugin"
@@ -311,6 +322,10 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
             return
         }
 
+        if (!ensureAuthenticatedForSnapshotOp(activity, "save_game_failed", saveName, "saveGame")) {
+            return
+        }
+
         val snapshotsClient = PlayGames.getSnapshotsClient(activity)
         snapshotsClient.open(saveName, true, SnapshotsClient.RESOLUTION_POLICY_MOST_RECENTLY_MODIFIED)
             .addOnCompleteListener { openTask ->
@@ -369,6 +384,10 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
             return
         }
 
+        if (!ensureAuthenticatedForSnapshotOp(activity, "load_game_failed", saveName, "loadGame")) {
+            return
+        }
+
         val snapshotsClient = PlayGames.getSnapshotsClient(activity)
         snapshotsClient.open(saveName, false, SnapshotsClient.RESOLUTION_POLICY_MOST_RECENTLY_MODIFIED)
             .addOnCompleteListener { openTask ->
@@ -413,6 +432,10 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
         Log.d(TAG, "deleteGame called: saveName=$saveName")
         val activity = getActivity() ?: run {
             emitSignal("delete_game_failed", saveName, -1L, "Activity not available")
+            return
+        }
+
+        if (!ensureAuthenticatedForSnapshotOp(activity, "delete_game_failed", saveName, "deleteGame")) {
             return
         }
 
