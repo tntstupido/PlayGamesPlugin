@@ -12,12 +12,12 @@ This plugin integrates Google Play Games Services into Godot games using the mod
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| Automatic Sign-in | ✅ | Users are signed in automatically at app launch |
+| Automatic Sign-in | ✅ | Adaptive startup auth check (silent on most devices, deferred explicit flow on Xiaomi-family devices) |
 | Manual Sign-in | ✅ | Trigger sign-in for users who declined initially |
 | Player Info | ✅ | Get player ID and display name |
 | Cloud Save | ✅ | Save/load/delete game data via Snapshots API |
 | Signals | ✅ | Async events via Godot signals |
-| Achievements | ⏳ | Planned for v1.1 |
+| Achievements | ⏳ | Planned for v1.2 |
 | Leaderboards | ✅ | Submit scores + load top scores + player rank |
 
 ### Play Games Services v2 Benefits
@@ -26,6 +26,15 @@ This plugin integrates Google Play Games Services into Godot games using the mod
 - **Automatic sign-in** - Returning users are signed in silently
 - **OS-managed accounts** - Sign-out handled in Android settings, not in-app
 - **Simplified API** - No deprecated GoogleSignIn classes
+
+### Production Hardening Notes (March 2026)
+
+- Failure status codes are emitted as Kotlin `Long` and declared as Godot signal `Long` (`int64`) to avoid bridge crashes such as `Invalid type for argument #1. Should be of type long`.
+- Snapshot operations (`saveGame`, `loadGame`, `deleteGame`) are guarded when signed out and emit `*_failed` with status `-3` and `"Not signed in"` instead of entering unstable resolution flows.
+- Leaderboard operations retry sign-in one time automatically when API returns `SIGN_IN_REQUIRED` (`statusCode=4`) and then retry the same request once.
+- Startup auth check is intentionally skipped on Xiaomi/Redmi/Poco devices to avoid repeated profile chooser prompts; explicit login UI should be triggered from game UI when needed.
+- Recommended app-side lifecycle hook: call `refreshAuthStatus()` on `NOTIFICATION_APPLICATION_RESUMED`.
+
 
 ## Prerequisites
 
@@ -61,8 +70,8 @@ PlayGamesPlugin/
 If you just want to use the plugin, download the release bundle and copy the folder into your project:
 
 ```bash
-# Example for v1.1.2
-unzip PlayGamesPlugin-v1.1.2-addons.zip
+# Example for v1.1.4
+unzip PlayGamesPlugin-v1.1.4-addons.zip
 cp -r play_games_plugin /path/to/your_project/addons/
 ```
 
@@ -133,8 +142,8 @@ func _notification(what):
 func _on_sign_in_success(player_id: String, player_name: String):
     print("Signed in: ", player_name)
 
-func _on_sign_in_failed():
-    print("Sign-in failed or declined")
+func _on_sign_in_failed(status_code: int64, message: String):
+    print("Sign-in failed: ", status_code, " ", message)
 
 func _on_player_info_loaded(player_id: String, player_name: String):
     print("Player info loaded: ", player_name)
@@ -193,7 +202,9 @@ func _on_leaderboard_top_scores_loaded(leaderboard_id: String, json: String):
 ### Cloud Save Notes
 
 - Cloud Save methods require the user to be authenticated (`isSignedIn() == true`).
-- If called while signed out, the plugin now fails gracefully and emits `*_failed` with status code `-3` and message `"Not signed in"` (instead of triggering Play Games resolution UI unexpectedly).
+- **Saved Games must be enabled in Play Console** for the linked Play Games project. If disabled, snapshot operations fail with `IllegalStateException: Cannot use snapshots without enabling the 'Saved Game' feature`.
+- If called while signed out, the plugin fails gracefully and emits `*_failed` with status code `-3` and message `"Not signed in"` (instead of triggering Play Games resolution UI unexpectedly).
+- On some device/account states, Games APIs can still return `SIGN_IN_REQUIRED` after a successful sign-in callback. Guard cloud/leaderboard UI and allow manual retry from the player.
 - Prefer waiting for `sign_in_success` or `player_info_loaded` before calling `loadGame`, `saveGame`, or `deleteGame`.
 
 ### Cloud Save Example
@@ -218,14 +229,14 @@ func load_player_state():
 func _on_save_game_success(save_name: String):
     print("Saved: ", save_name)
 
-func _on_save_game_failed(save_name: String, status_code: int, message: String):
+func _on_save_game_failed(save_name: String, status_code: int64, message: String):
     print("Save failed: ", message)
 
 func _on_load_game_success(save_name: String, data: String):
     var state = JSON.parse_string(data)
     print("HP: ", state.get("hp", 100))
 
-func _on_load_game_failed(save_name: String, status_code: int, message: String):
+func _on_load_game_failed(save_name: String, status_code: int64, message: String):
     print("Load failed: ", message)
 ```
 
@@ -271,20 +282,22 @@ The plugin exposes both camelCase and snake_case for core auth/cloud methods:
 | Signal | Parameters | Description |
 |--------|------------|-------------|
 | `sign_in_success` | player_id: String, player_name: String | Emitted on successful manual sign-in |
-| `sign_in_failed` | none | Emitted when sign-in fails/declined |
+| `sign_in_failed` | status_code: int64, message: String | Emitted when sign-in fails/declined |
 | `player_info_loaded` | player_id: String, player_name: String | Emitted when player info is loaded (auto sign-in) |
 | `save_game_success` | save_name: String | Emitted when cloud save succeeds |
-| `save_game_failed` | save_name: String, status_code: int, message: String | Emitted when cloud save fails |
+| `save_game_failed` | save_name: String, status_code: int64, message: String | Emitted when cloud save fails |
 | `load_game_success` | save_name: String, data: String | Emitted when cloud load succeeds (data is the saved string) |
-| `load_game_failed` | save_name: String, status_code: int, message: String | Emitted when cloud load fails |
+| `load_game_failed` | save_name: String, status_code: int64, message: String | Emitted when cloud load fails |
 | `delete_game_success` | save_name: String | Emitted when cloud delete succeeds |
-| `delete_game_failed` | save_name: String, status_code: int, message: String | Emitted when cloud delete fails |
+| `delete_game_failed` | save_name: String, status_code: int64, message: String | Emitted when cloud delete fails |
 | `leaderboard_submit_success` | leaderboard_id: String | Emitted when score submit succeeds |
-| `leaderboard_submit_failed` | leaderboard_id: String, status_code: int, message: String | Emitted when score submit fails |
+| `leaderboard_submit_failed` | leaderboard_id: String, status_code: int64, message: String | Emitted when score submit fails |
 | `leaderboard_top_scores_loaded` | leaderboard_id: String, json: String | Emitted with top scores JSON |
-| `leaderboard_top_scores_failed` | leaderboard_id: String, status_code: int, message: String | Emitted when top scores load fails |
+| `leaderboard_top_scores_failed` | leaderboard_id: String, status_code: int64, message: String | Emitted when top scores load fails |
 | `leaderboard_player_score_loaded` | leaderboard_id: String, json: String | Emitted with player score JSON |
-| `leaderboard_player_score_failed` | leaderboard_id: String, status_code: int, message: String | Emitted when player score load fails |
+| `leaderboard_player_score_failed` | leaderboard_id: String, status_code: int64, message: String | Emitted when player score load fails |
+
+> Note: failure status values are emitted as 64-bit numeric values from Kotlin (`Long`) for reliable Godot bridge marshalling. In GDScript, handling them as `int` or `Variant` is safe.
 
 ## Configuration
 
@@ -337,18 +350,35 @@ This is the most common issue. Check the following:
 - Verify your App ID is correct in `play_games_plugin.gd`
 - Check that your app's SHA-1 fingerprint is registered in Play Console
 - Ensure Play Games Services is properly configured in Play Console
+- Ensure your exported app declares `INTERNET` permission (`export_presets.cfg`).
+- Verify that your test account has an initialized Play Games profile on that specific device/account state.
 - Check logcat for detailed error messages:
   ```bash
   adb logcat | grep -E "(PlayGames|GamesSignIn)"
   ```
+
+### Xiaomi / MIUI Specific Notes
+
+- Xiaomi-family devices (Xiaomi/Redmi/Poco) can repeatedly show account/profile chooser dialogs if auth checks run too early at startup.
+- Current plugin behavior intentionally defers startup auth check on those devices; it waits for explicit `signIn()` calls from UI flow.
+- If you require auto-login UX, trigger it after first menu frame/UI settle, not during earliest app bootstrap.
 
 ### Common Logcat Errors
 
 | Error | Cause | Solution |
 |-------|-------|----------|
 | `DEVELOPER_ERROR` | SHA-1 mismatch or wrong App ID | Register debug/release SHA-1 in Play Console |
-| `SIGN_IN_REQUIRED` | User hasn't signed in before | Call `signIn()` to show sign-in UI |
+| `SIGN_IN_REQUIRED` | No valid active Games auth session for that API call | Trigger `signIn()`; plugin retries once for leaderboard calls |
 | `NETWORK_ERROR` | No internet connection | Check device connectivity |
+| `IllegalStateException: Cannot use snapshots without enabling the 'Saved Game' feature` | Saved Games disabled in Play Console | Enable **Saved games** in Play Games Services configuration |
+| `java.lang.IllegalArgumentException: Invalid type for argument #1. Should be of type long` | Signal argument type mismatch (`Int` emitted for signal declared as `long`) | Emit Kotlin `Long` (`toLong()`), declare signal parameter as `Long::class.javaObjectType` |
+| `Not signed in` with status `-3` on snapshot calls | Cloud operation called before confirmed auth | Wait for `sign_in_success`/`player_info_loaded` or gate with `isSignedIn()` |
+
+### Leaderboard Player Score Fallback Payload
+
+`loadPlayerScore(...)` is resilient by design: if API lookup fails, plugin still emits `leaderboard_player_score_loaded` with a fallback payload (`rank: "-"`, `score: 0`) and includes optional `status_code` / `error` fields for UI diagnostics.
+
+This keeps leaderboard UI rendering stable without forcing a hard failure signal path.
 
 ### "Play Games Services not available"
 
@@ -377,15 +407,14 @@ If leaderboard calls crash or fail in **debug** builds:
 
 ## Roadmap
 
-### v1.1 - Achievements
+### v1.2 - Achievements
 - `unlockAchievement(id)`
 - `incrementAchievement(id, steps)`
 - `showAchievementsUI()`
 
-### v1.2 - Leaderboards
-- `submitScore(leaderboardId, score)`
-- `loadTopScores(leaderboardId, timeSpan, collection, maxResults, forceReload)`
-- `loadPlayerScore(leaderboardId, timeSpan, collection, forceReload)`
+### v1.3 - Leaderboard UX Extensions
+- Optional native leaderboard intent wrappers (`showLeaderboardUI`, `showAllLeaderboardsUI`)
+- Optional paging/filter helpers for large custom leaderboard views
 
 ## Resources
 

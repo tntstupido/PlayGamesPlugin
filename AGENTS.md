@@ -27,7 +27,7 @@ PlayGamesPlugin is a Godot 4.2+ Android plugin for Google Play Games Services v2
 ### Signal Naming Convention
 
 - Success signals: `<feature>_success` (e.g. `save_game_success`)
-- Failure signals: `<feature>_failed` with parameters `(context: String, status_code: Int, message: String)`
+- Failure signals: `<feature>_failed` with parameters `(context: String, status_code: Long, message: String)` (Godot side: `int64`)
 
 ### Dependencies
 

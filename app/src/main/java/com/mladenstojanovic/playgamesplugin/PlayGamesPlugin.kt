@@ -1,6 +1,7 @@
 package com.mladenstojanovic.playgamesplugin
 
 import android.app.Activity
+import android.os.Build
 import android.util.Log
 import android.view.View
 import com.google.android.gms.common.api.ApiException
@@ -66,13 +67,65 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
         }
     }
 
+    private fun emitSignalSafe(signalName: String, vararg args: Any?) {
+        try {
+            emitSignal(signalName, *args)
+        } catch (e: IllegalArgumentException) {
+            Log.e(TAG, "emitSignal failed for $signalName with args=${args.contentToString()}", e)
+        } catch (e: RuntimeException) {
+            Log.e(TAG, "emitSignal runtime failure for $signalName with args=${args.contentToString()}", e)
+        }
+    }
+
+
+    private fun isXiaomiFamilyDevice(): Boolean {
+        val manufacturer = Build.MANUFACTURER?.lowercase() ?: ""
+        val brand = Build.BRAND?.lowercase() ?: ""
+        return manufacturer.contains("xiaomi") || manufacturer.contains("redmi") || manufacturer.contains("poco") ||
+            brand.contains("xiaomi") || brand.contains("redmi") || brand.contains("poco")
+    }
+
+    private fun retrySignInForStatusCode(
+        statusCode: Int,
+        operation: String,
+        onRetryReady: () -> Unit,
+        onRetryFailed: (Int, String) -> Unit
+    ): Boolean {
+        if (statusCode != 4) {
+            return false
+        }
+        val client = gamesSignInClient ?: run {
+            onRetryFailed(-1, "Games sign-in client unavailable")
+            return true
+        }
+        Log.w(TAG, "$operation got SIGN_IN_REQUIRED, retrying sign-in once")
+        client.signIn().addOnCompleteListener { task ->
+            val result = task.result
+            if (task.isSuccessful && result != null && result.isAuthenticated) {
+                isAuthenticated = true
+                loadPlayerInfo()
+                onRetryReady()
+            } else {
+                isAuthenticated = false
+                val (retryCode, retryMsg) = if (task.isCanceled) {
+                    Pair(-2, "Canceled")
+                } else {
+                    getApiExceptionInfo(task.exception)
+                }
+                logTaskFailure("$operation retrySignIn", task.exception, task.isCanceled)
+                onRetryFailed(retryCode, retryMsg)
+            }
+        }
+        return true
+    }
+
     private fun ensureAuthenticatedForSnapshotOp(activity: Activity, failureSignal: String, saveName: String, operation: String): Boolean {
         if (isAuthenticated) {
             return true
         }
         Log.w(TAG, "$operation blocked: user not authenticated")
         activity.runOnUiThread {
-            emitSignal(failureSignal, saveName, -3L, "Not signed in")
+            emitSignalSafe(failureSignal, saveName, -3L, "Not signed in")
         }
         return false
     }
@@ -85,22 +138,22 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
     override fun getPluginSignals(): Set<SignalInfo> {
         return setOf(
             SignalInfo("sign_in_success", String::class.java, String::class.java),
-            SignalInfo("sign_in_failed", Long::class.java, String::class.java),
+            SignalInfo("sign_in_failed", Long::class.javaObjectType, String::class.java),
             SignalInfo("player_info_loaded", String::class.java, String::class.java),
             // Cloud Save signals
             SignalInfo("save_game_success", String::class.java),
-            SignalInfo("save_game_failed", String::class.java, Long::class.java, String::class.java),
+            SignalInfo("save_game_failed", String::class.java, Long::class.javaObjectType, String::class.java),
             SignalInfo("load_game_success", String::class.java, String::class.java),
-            SignalInfo("load_game_failed", String::class.java, Long::class.java, String::class.java),
+            SignalInfo("load_game_failed", String::class.java, Long::class.javaObjectType, String::class.java),
             SignalInfo("delete_game_success", String::class.java),
-            SignalInfo("delete_game_failed", String::class.java, Long::class.java, String::class.java),
+            SignalInfo("delete_game_failed", String::class.java, Long::class.javaObjectType, String::class.java),
             // Leaderboard signals
             SignalInfo("leaderboard_submit_success", String::class.java),
-            SignalInfo("leaderboard_submit_failed", String::class.java, Long::class.java, String::class.java),
+            SignalInfo("leaderboard_submit_failed", String::class.java, Long::class.javaObjectType, String::class.java),
             SignalInfo("leaderboard_top_scores_loaded", String::class.java, String::class.java),
-            SignalInfo("leaderboard_top_scores_failed", String::class.java, Long::class.java, String::class.java),
+            SignalInfo("leaderboard_top_scores_failed", String::class.java, Long::class.javaObjectType, String::class.java),
             SignalInfo("leaderboard_player_score_loaded", String::class.java, String::class.java),
-            SignalInfo("leaderboard_player_score_failed", String::class.java, Long::class.java, String::class.java)
+            SignalInfo("leaderboard_player_score_failed", String::class.java, Long::class.javaObjectType, String::class.java)
         )
     }
 
@@ -115,8 +168,12 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
         // Get the sign-in client
         gamesSignInClient = PlayGames.getGamesSignInClient(activity)
 
-        // Check authentication status silently
-        checkAuthenticationStatus()
+        // Check authentication status silently (skip Xiaomi-family devices due repeated profile-chooser prompt)
+        if (isXiaomiFamilyDevice()) {
+            Log.w(TAG, "Skipping startup auth check on Xiaomi-family device; waiting for explicit sign-in")
+        } else {
+            checkAuthenticationStatus()
+        }
 
         return null
     }
@@ -149,7 +206,7 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
                     currentPlayerId = player.playerId
                     currentPlayerName = player.displayName
                     Log.d(TAG, "Player loaded: $currentPlayerName ($currentPlayerId)")
-                    emitSignal("player_info_loaded", currentPlayerId, currentPlayerName)
+                    emitSignalSafe("player_info_loaded", currentPlayerId, currentPlayerName)
                 } else {
                     Log.e(TAG, "Failed to load player info", task.exception)
                 }
@@ -207,7 +264,7 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
                 Log.d(TAG, "Sign in successful")
                 loadPlayerInfo()
                 getActivity()?.runOnUiThread {
-                    emitSignal("sign_in_success", currentPlayerId, currentPlayerName)
+                    emitSignalSafe("sign_in_success", currentPlayerId, currentPlayerName)
                 }
             } else {
                 isAuthenticated = false
@@ -219,7 +276,7 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
                 }
                 logTaskFailure("Sign in", task.exception, isCanceled)
                 getActivity()?.runOnUiThread {
-                    emitSignal("sign_in_failed", statusCode.toLong(), message)
+                    emitSignalSafe("sign_in_failed", statusCode.toLong(), message)
                 }
             }
         }
@@ -318,7 +375,7 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
     fun saveGame(saveName: String, data: String, description: String) {
         Log.d(TAG, "saveGame called: saveName=$saveName")
         val activity = getActivity() ?: run {
-            emitSignal("save_game_failed", saveName, -1L, "Activity not available")
+            emitSignalSafe("save_game_failed", saveName, -1L, "Activity not available")
             return
         }
 
@@ -332,7 +389,7 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
                 if (!openTask.isSuccessful) {
                     val (code, msg) = getApiExceptionInfo(openTask.exception)
                     logTaskFailure("saveGame open", openTask.exception, openTask.isCanceled)
-                    activity.runOnUiThread { emitSignal("save_game_failed", saveName, code.toLong(), msg) }
+                    activity.runOnUiThread { emitSignalSafe("save_game_failed", saveName, code.toLong(), msg) }
                     return@addOnCompleteListener
                 }
 
@@ -349,17 +406,17 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
                         .addOnCompleteListener { commitTask ->
                             if (commitTask.isSuccessful) {
                                 Log.d(TAG, "saveGame success: $saveName")
-                                activity.runOnUiThread { emitSignal("save_game_success", saveName) }
+                                activity.runOnUiThread { emitSignalSafe("save_game_success", saveName) }
                             } else {
                                 val (code, msg) = getApiExceptionInfo(commitTask.exception)
                                 logTaskFailure("saveGame commit", commitTask.exception, commitTask.isCanceled)
-                                activity.runOnUiThread { emitSignal("save_game_failed", saveName, code.toLong(), msg) }
+                                activity.runOnUiThread { emitSignalSafe("save_game_failed", saveName, code.toLong(), msg) }
                             }
                         }
                 } else {
                     // Conflict resolved automatically by RESOLUTION_POLICY_MOST_RECENTLY_MODIFIED
                     Log.w(TAG, "saveGame: unexpected conflict for $saveName")
-                    activity.runOnUiThread { emitSignal("save_game_failed", saveName, -1L, "Unexpected conflict") }
+                    activity.runOnUiThread { emitSignalSafe("save_game_failed", saveName, -1L, "Unexpected conflict") }
                 }
             }
     }
@@ -380,7 +437,7 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
     fun loadGame(saveName: String) {
         Log.d(TAG, "loadGame called: saveName=$saveName")
         val activity = getActivity() ?: run {
-            emitSignal("load_game_failed", saveName, -1L, "Activity not available")
+            emitSignalSafe("load_game_failed", saveName, -1L, "Activity not available")
             return
         }
 
@@ -394,7 +451,7 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
                 if (!openTask.isSuccessful) {
                     val (code, msg) = getApiExceptionInfo(openTask.exception)
                     logTaskFailure("loadGame open", openTask.exception, openTask.isCanceled)
-                    activity.runOnUiThread { emitSignal("load_game_failed", saveName, code.toLong(), msg) }
+                    activity.runOnUiThread { emitSignalSafe("load_game_failed", saveName, code.toLong(), msg) }
                     return@addOnCompleteListener
                 }
 
@@ -407,10 +464,10 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
                     snapshotsClient.discardAndClose(snapshot)
 
                     Log.d(TAG, "loadGame success: $saveName (${bytes.size} bytes)")
-                    activity.runOnUiThread { emitSignal("load_game_success", saveName, gameData) }
+                    activity.runOnUiThread { emitSignalSafe("load_game_success", saveName, gameData) }
                 } else {
                     Log.w(TAG, "loadGame: unexpected conflict for $saveName")
-                    activity.runOnUiThread { emitSignal("load_game_failed", saveName, -1L, "Unexpected conflict") }
+                    activity.runOnUiThread { emitSignalSafe("load_game_failed", saveName, -1L, "Unexpected conflict") }
                 }
             }
     }
@@ -431,7 +488,7 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
     fun deleteGame(saveName: String) {
         Log.d(TAG, "deleteGame called: saveName=$saveName")
         val activity = getActivity() ?: run {
-            emitSignal("delete_game_failed", saveName, -1L, "Activity not available")
+            emitSignalSafe("delete_game_failed", saveName, -1L, "Activity not available")
             return
         }
 
@@ -445,7 +502,7 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
                 if (!openTask.isSuccessful) {
                     val (code, msg) = getApiExceptionInfo(openTask.exception)
                     logTaskFailure("deleteGame open", openTask.exception, openTask.isCanceled)
-                    activity.runOnUiThread { emitSignal("delete_game_failed", saveName, code.toLong(), msg) }
+                    activity.runOnUiThread { emitSignalSafe("delete_game_failed", saveName, code.toLong(), msg) }
                     return@addOnCompleteListener
                 }
 
@@ -458,16 +515,16 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
                         .addOnCompleteListener { deleteTask ->
                             if (deleteTask.isSuccessful) {
                                 Log.d(TAG, "deleteGame success: $saveName")
-                                activity.runOnUiThread { emitSignal("delete_game_success", saveName) }
+                                activity.runOnUiThread { emitSignalSafe("delete_game_success", saveName) }
                             } else {
                                 val (code, msg) = getApiExceptionInfo(deleteTask.exception)
                                 logTaskFailure("deleteGame delete", deleteTask.exception, deleteTask.isCanceled)
-                                activity.runOnUiThread { emitSignal("delete_game_failed", saveName, code.toLong(), msg) }
+                                activity.runOnUiThread { emitSignalSafe("delete_game_failed", saveName, code.toLong(), msg) }
                             }
                         }
                 } else {
                     Log.w(TAG, "deleteGame: unexpected conflict for $saveName")
-                    activity.runOnUiThread { emitSignal("delete_game_failed", saveName, -1L, "Unexpected conflict") }
+                    activity.runOnUiThread { emitSignalSafe("delete_game_failed", saveName, -1L, "Unexpected conflict") }
                 }
             }
     }
@@ -484,9 +541,13 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
 
     @UsedByGodot
     fun submitScore(leaderboardId: String, score: Long) {
+        submitScoreInternal(leaderboardId, score, true)
+    }
+
+    private fun submitScoreInternal(leaderboardId: String, score: Long, allowAuthRetry: Boolean) {
         Log.d(TAG, "submitScore called: leaderboardId=$leaderboardId, score=$score")
         val activity = getActivity() ?: run {
-            emitSignal("leaderboard_submit_failed", leaderboardId, -1L, "Activity not available")
+            emitSignalSafe("leaderboard_submit_failed", leaderboardId, -1L, "Activity not available")
             return
         }
 
@@ -494,20 +555,43 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
             .submitScoreImmediate(leaderboardId, score)
             .addOnCompleteListener { task ->
                 if (task.isSuccessful) {
-                    activity.runOnUiThread { emitSignal("leaderboard_submit_success", leaderboardId) }
+                    activity.runOnUiThread { emitSignalSafe("leaderboard_submit_success", leaderboardId) }
                 } else {
                     val (code, msg) = getApiExceptionInfo(task.exception)
                     logTaskFailure("submitScore", task.exception, task.isCanceled)
-                    activity.runOnUiThread { emitSignal("leaderboard_submit_failed", leaderboardId, code.toLong(), msg) }
+                    if (allowAuthRetry && retrySignInForStatusCode(
+                            code,
+                            "submitScore",
+                            { submitScoreInternal(leaderboardId, score, false) },
+                            { retryCode, retryMsg ->
+                                activity.runOnUiThread {
+                                    emitSignalSafe("leaderboard_submit_failed", leaderboardId, retryCode.toLong(), retryMsg)
+                                }
+                            }
+                        )) {
+                        return@addOnCompleteListener
+                    }
+                    activity.runOnUiThread { emitSignalSafe("leaderboard_submit_failed", leaderboardId, code.toLong(), msg) }
                 }
             }
     }
 
     @UsedByGodot
     fun loadTopScores(leaderboardId: String, timeSpan: String, collection: String, maxResults: Int, forceReload: Boolean) {
+        loadTopScoresInternal(leaderboardId, timeSpan, collection, maxResults, forceReload, true)
+    }
+
+    private fun loadTopScoresInternal(
+        leaderboardId: String,
+        timeSpan: String,
+        collection: String,
+        maxResults: Int,
+        forceReload: Boolean,
+        allowAuthRetry: Boolean
+    ) {
         Log.d(TAG, "loadTopScores called: leaderboardId=$leaderboardId")
         val activity = getActivity() ?: run {
-            emitSignal("leaderboard_top_scores_failed", leaderboardId, -1L, "Activity not available")
+            emitSignalSafe("leaderboard_top_scores_failed", leaderboardId, -1L, "Activity not available")
             return
         }
 
@@ -531,17 +615,39 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
                     val payload = JSONObject()
                     payload.put("leaderboard_id", leaderboardId)
                     payload.put("scores", arr)
-                    activity.runOnUiThread { emitSignal("leaderboard_top_scores_loaded", leaderboardId, payload.toString()) }
+                    activity.runOnUiThread { emitSignalSafe("leaderboard_top_scores_loaded", leaderboardId, payload.toString()) }
                 } else {
                     val (code, msg) = getApiExceptionInfo(task.exception)
                     logTaskFailure("loadTopScores", task.exception, task.isCanceled)
-                    activity.runOnUiThread { emitSignal("leaderboard_top_scores_failed", leaderboardId, code.toLong(), msg) }
+                    if (allowAuthRetry && retrySignInForStatusCode(
+                            code,
+                            "loadTopScores",
+                            { loadTopScoresInternal(leaderboardId, timeSpan, collection, maxResults, forceReload, false) },
+                            { retryCode, retryMsg ->
+                                activity.runOnUiThread {
+                                    emitSignalSafe("leaderboard_top_scores_failed", leaderboardId, retryCode.toLong(), retryMsg)
+                                }
+                            }
+                        )) {
+                        return@addOnCompleteListener
+                    }
+                    activity.runOnUiThread { emitSignalSafe("leaderboard_top_scores_failed", leaderboardId, code.toLong(), msg) }
                 }
             }
     }
 
     @UsedByGodot
     fun loadPlayerScore(leaderboardId: String, timeSpan: String, collection: String, forceReload: Boolean) {
+        loadPlayerScoreInternal(leaderboardId, timeSpan, collection, forceReload, true)
+    }
+
+    private fun loadPlayerScoreInternal(
+        leaderboardId: String,
+        timeSpan: String,
+        collection: String,
+        forceReload: Boolean,
+        allowAuthRetry: Boolean
+    ) {
         Log.d(TAG, "loadPlayerScore called: leaderboardId=$leaderboardId")
         val activity = getActivity() ?: run {
             val payload = JSONObject()
@@ -550,7 +656,7 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
             payload.put("display_name", "You")
             payload.put("score", 0)
             payload.put("is_player", true)
-            emitSignal("leaderboard_player_score_loaded", leaderboardId, payload.toString())
+            emitSignalSafe("leaderboard_player_score_loaded", leaderboardId, payload.toString())
             return
         }
 
@@ -566,7 +672,7 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
                     if (score != null) {
                         val payload = buildScoreJson(score)
                         payload.put("leaderboard_id", leaderboardId)
-                        activity.runOnUiThread { emitSignal("leaderboard_player_score_loaded", leaderboardId, payload.toString()) }
+                        activity.runOnUiThread { emitSignalSafe("leaderboard_player_score_loaded", leaderboardId, payload.toString()) }
                     } else {
                         val payload = JSONObject()
                         payload.put("leaderboard_id", leaderboardId)
@@ -574,11 +680,31 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
                         payload.put("display_name", "You")
                         payload.put("score", 0)
                         payload.put("is_player", true)
-                        activity.runOnUiThread { emitSignal("leaderboard_player_score_loaded", leaderboardId, payload.toString()) }
+                        activity.runOnUiThread { emitSignalSafe("leaderboard_player_score_loaded", leaderboardId, payload.toString()) }
                     }
                 } else {
                     val (code, msg) = getApiExceptionInfo(task.exception)
                     logTaskFailure("loadPlayerScore", task.exception, task.isCanceled)
+                    if (allowAuthRetry && retrySignInForStatusCode(
+                            code,
+                            "loadPlayerScore",
+                            { loadPlayerScoreInternal(leaderboardId, timeSpan, collection, forceReload, false) },
+                            { retryCode, retryMsg ->
+                                val retryPayload = JSONObject()
+                                retryPayload.put("leaderboard_id", leaderboardId)
+                                retryPayload.put("rank", "-")
+                                retryPayload.put("display_name", "You")
+                                retryPayload.put("score", 0)
+                                retryPayload.put("is_player", true)
+                                retryPayload.put("status_code", retryCode)
+                                retryPayload.put("error", retryMsg)
+                                activity.runOnUiThread {
+                                    emitSignalSafe("leaderboard_player_score_loaded", leaderboardId, retryPayload.toString())
+                                }
+                            }
+                        )) {
+                        return@addOnCompleteListener
+                    }
                     val payload = JSONObject()
                     payload.put("leaderboard_id", leaderboardId)
                     payload.put("rank", "-")
@@ -587,7 +713,7 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
                     payload.put("is_player", true)
                     payload.put("status_code", code)
                     payload.put("error", msg)
-                    activity.runOnUiThread { emitSignal("leaderboard_player_score_loaded", leaderboardId, payload.toString()) }
+                    activity.runOnUiThread { emitSignalSafe("leaderboard_player_score_loaded", leaderboardId, payload.toString()) }
                 }
             }
     }

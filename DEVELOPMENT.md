@@ -36,6 +36,52 @@ Technical reference for developing and extending the PlayGamesPlugin.
 └──────────────────────────────────────────────────────────────────┘
 ```
 
+## Runtime Behavior Contracts (March 2026)
+
+### Signal Type Safety (Godot Bridge)
+
+- Failure signals use `Long::class.javaObjectType` in `getPluginSignals()`.
+- Runtime emissions must pass Kotlin `Long` values (`statusCode.toLong()`).
+- Emitting `Int` for a signal declared as `long` can throw:
+  - `java.lang.IllegalArgumentException: Invalid type for argument #1. Should be of type long`
+
+When adding or changing async APIs:
+1. Keep signal signature and emitted runtime value types identical.
+2. Prefer helper wrappers for failure emission to reduce copy/paste mistakes.
+3. Validate with a forced failure path on device before release.
+
+### Snapshot Guard Contract
+
+Cloud snapshot operations (`saveGame`, `loadGame`, `deleteGame`) must never run without confirmed auth:
+- Guard condition: `isAuthenticated == true`
+- Failure behavior: emit `<op>_failed(save_name, -3L, "Not signed in")`
+- Rationale: avoids unstable Play Games resolution activity flows from background/startup states.
+
+### Leaderboard Auth Retry Contract
+
+Leaderboard API calls can fail with `SIGN_IN_REQUIRED` (`statusCode=4`) even after recent sign-in callbacks.
+
+Current strategy:
+1. Execute requested leaderboard API call.
+2. If failure status is `4`, run one explicit `signIn()` retry.
+3. On success, retry the same leaderboard call exactly once.
+4. If retry fails, emit final failure payload/signal.
+
+This prevents permanent dead-session states while avoiding infinite auth loops.
+
+### Xiaomi / Redmi / Poco Startup Policy
+
+The plugin intentionally skips startup `isAuthenticated` check on Xiaomi-family devices:
+- Problem: some MIUI/HyperOS builds repeatedly surface profile/account chooser dialogs when auth probing runs too early.
+- Policy: defer to explicit UI-driven sign-in (`signIn()`), typically after menu/UI ready.
+- Detection: manufacturer/brand match on `xiaomi`, `redmi`, `poco`.
+
+### App Lifecycle Expectation
+
+Host app should call `refreshAuthStatus()` when app returns to foreground:
+- Recommended in Godot `_notification(NOTIFICATION_APPLICATION_RESUMED)`.
+- Keeps in-memory auth state synchronized when user changes account/session outside app.
+
 ## Key Files
 
 | File | Purpose |
@@ -412,10 +458,24 @@ adb logcat | grep godot
 | Method not found (intermittent) | Naming mismatch in integration layer | Expose both camelCase and snake_case aliases |
 | Singleton not found | Missing v2 registration | Add meta-data to AndroidManifest.xml |
 | Resource linking errors | Material Components in AAR | Use `compileOnly` instead of `implementation` |
+| `Invalid type for argument #1. Should be of type long` | Signal parameter type mismatch (`Int` vs declared `Long`) | Declare signal with `Long::class.javaObjectType` and emit `toLong()` |
+| `IllegalStateException` about Saved Games feature | Play Console Saved Games disabled | Enable Saved Games in Play Games Services config |
+| Snapshot call emits `-3 / Not signed in` | Host called snapshot API before auth | Gate with `isSignedIn()` and wait for sign-in/player info signal |
 
 ## Version History
 
-### v1.1.1 (Current)
+### v1.1.4 (Current)
+- Added safe signal bridge emission wrapper (`emitSignalSafe`) across auth/cloud/leaderboard callbacks.
+- Hardened Godot bridge signal typing for failure status codes (`Long`/`int64`) to prevent runtime type mismatch crashes.
+- Added one-shot auth retry for leaderboard APIs on `SIGN_IN_REQUIRED`.
+- Added Xiaomi-family startup auth deferral policy.
+- Expanded integration and troubleshooting docs (README + DEVELOPMENT).
+
+### v1.1.3
+- Hardened Godot bridge signal typing for failure status codes (`Long`/`int64`)
+- Added snapshot pre-auth guard (`-3`, `"Not signed in"`) for save/load/delete
+
+### v1.1.1
 - Added snake_case method aliases for auth/cloud API compatibility:
   - `sign_in`, `sign_out`, `is_signed_in`, `refresh_auth_status`
   - `save_game`, `load_game`, `delete_game`
