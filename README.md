@@ -70,8 +70,8 @@ PlayGamesPlugin/
 If you just want to use the plugin, download the release bundle and copy the folder into your project:
 
 ```bash
-# Example for v1.1.4
-unzip PlayGamesPlugin-v1.1.4-addons.zip
+# Example for v1.1.5
+unzip PlayGamesPlugin-v1.1.5-addons.zip
 cp -r play_games_plugin /path/to/your_project/addons/
 ```
 
@@ -175,9 +175,13 @@ func _on_leaderboard_top_scores_loaded(leaderboard_id: String, json: String):
 ```json
 {
   "leaderboard_id": "leaderboard_id",
+  "time_span": "daily",
+  "collection": "public",
   "scores": [
     {
-      "rank": "1",
+      "rank": 1,
+      "rank_value": 1,
+      "rank_known": true,
       "score": 1234,
       "display_name": "Player",
       "player_id": "abc",
@@ -191,13 +195,19 @@ func _on_leaderboard_top_scores_loaded(leaderboard_id: String, json: String):
 ```json
 {
   "leaderboard_id": "leaderboard_id",
-  "rank": "12",
+  "time_span": "daily",
+  "collection": "public",
+  "rank": 12,
+  "rank_value": 12,
+  "rank_known": true,
   "score": 987,
   "display_name": "You",
   "player_id": "abc",
   "is_player": true
 }
 ```
+
+`rank = -1` with `rank_known = false` means Google Play Games returned an unknown rank (for example, score exists but public rank is hidden).
 
 ### Cloud Save Notes
 

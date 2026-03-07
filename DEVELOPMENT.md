@@ -234,8 +234,10 @@ PlayGames.getLeaderboardsClient(activity)
 ```json
 {
   "leaderboard_id": "leaderboard_id",
+  "time_span": "daily",
+  "collection": "public",
   "scores": [
-    {"rank": "1", "score": 1234, "display_name": "Player", "player_id": "abc", "is_player": false}
+    {"rank": 1, "rank_value": 1, "rank_known": true, "score": 1234, "display_name": "Player", "player_id": "abc", "is_player": false}
   ]
 }
 ```
@@ -243,13 +245,19 @@ PlayGames.getLeaderboardsClient(activity)
 ```json
 {
   "leaderboard_id": "leaderboard_id",
-  "rank": "12",
+  "time_span": "daily",
+  "collection": "public",
+  "rank": 12,
+  "rank_value": 12,
+  "rank_known": true,
   "score": 987,
   "display_name": "You",
   "player_id": "abc",
   "is_player": true
 }
 ```
+
+`rank = -1` plus `rank_known = false` indicates an unknown rank state from Play Games.
 
 
 ```kotlin
@@ -464,7 +472,11 @@ adb logcat | grep godot
 
 ## Version History
 
-### v1.1.4 (Current)
+### v1.1.5 (Current)
+- Leaderboard payload now includes `rank_known`, `rank_value`, `time_span`, and `collection` for better diagnostics.
+- Clarified unknown-rank (`rank=-1`) handling as data-state, not API failure.
+
+### v1.1.4
 - Added safe signal bridge emission wrapper (`emitSignalSafe`) across auth/cloud/leaderboard callbacks.
 - Hardened Godot bridge signal typing for failure status codes (`Long`/`int64`) to prevent runtime type mismatch crashes.
 - Added one-shot auth retry for leaderboard APIs on `SIGN_IN_REQUIRED`.

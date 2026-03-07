@@ -230,7 +230,11 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
 
     private fun buildScoreJson(score: com.google.android.gms.games.leaderboard.LeaderboardScore): JSONObject {
         val obj = JSONObject()
-        obj.put("rank", score.rank)
+        val rankValue = score.rank
+        val rankKnown = rankValue >= 0
+        obj.put("rank", rankValue)
+        obj.put("rank_value", rankValue)
+        obj.put("rank_known", rankKnown)
         obj.put("score", score.rawScore)
         obj.put("display_name", score.scoreHolderDisplayName)
         val playerId = score.scoreHolder?.playerId ?: ""
@@ -597,6 +601,8 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
 
         val timeSpanConst = parseTimeSpan(timeSpan)
         val collectionConst = parseCollection(collection)
+        val normalizedTimeSpan = timeSpan.lowercase()
+        val normalizedCollection = collection.lowercase()
 
         PlayGames.getLeaderboardsClient(activity)
             .loadTopScores(leaderboardId, timeSpanConst, collectionConst, maxResults, forceReload)
@@ -606,15 +612,22 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
                     val scores = annotated.get()
                     val buffer = scores?.getScores()
                     val arr = JSONArray()
+                    var unknownRankCount = 0
                     if (buffer != null) {
                         for (score in buffer) {
+                            if (score.rank < 0) {
+                                unknownRankCount += 1
+                            }
                             arr.put(buildScoreJson(score))
                         }
                         buffer.release()
                     }
                     val payload = JSONObject()
                     payload.put("leaderboard_id", leaderboardId)
+                    payload.put("time_span", normalizedTimeSpan)
+                    payload.put("collection", normalizedCollection)
                     payload.put("scores", arr)
+                    Log.d(TAG, "loadTopScores result: leaderboardId=$leaderboardId timeSpan=$normalizedTimeSpan collection=$normalizedCollection entries=${arr.length()} unknownRanks=$unknownRankCount")
                     activity.runOnUiThread { emitSignalSafe("leaderboard_top_scores_loaded", leaderboardId, payload.toString()) }
                 } else {
                     val (code, msg) = getApiExceptionInfo(task.exception)
@@ -649,10 +662,16 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
         allowAuthRetry: Boolean
     ) {
         Log.d(TAG, "loadPlayerScore called: leaderboardId=$leaderboardId")
+        val normalizedTimeSpan = timeSpan.lowercase()
+        val normalizedCollection = collection.lowercase()
         val activity = getActivity() ?: run {
             val payload = JSONObject()
             payload.put("leaderboard_id", leaderboardId)
+            payload.put("time_span", normalizedTimeSpan)
+            payload.put("collection", normalizedCollection)
             payload.put("rank", "-")
+            payload.put("rank_value", -1)
+            payload.put("rank_known", false)
             payload.put("display_name", "You")
             payload.put("score", 0)
             payload.put("is_player", true)
@@ -672,14 +691,24 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
                     if (score != null) {
                         val payload = buildScoreJson(score)
                         payload.put("leaderboard_id", leaderboardId)
+                        payload.put("time_span", normalizedTimeSpan)
+                        payload.put("collection", normalizedCollection)
+                        val rankValue = score.rank
+                        val rankKnown = rankValue >= 0
+                        Log.d(TAG, "loadPlayerScore result: leaderboardId=$leaderboardId timeSpan=$normalizedTimeSpan collection=$normalizedCollection rank=$rankValue rankKnown=$rankKnown rawScore=${score.rawScore}")
                         activity.runOnUiThread { emitSignalSafe("leaderboard_player_score_loaded", leaderboardId, payload.toString()) }
                     } else {
                         val payload = JSONObject()
                         payload.put("leaderboard_id", leaderboardId)
+                        payload.put("time_span", normalizedTimeSpan)
+                        payload.put("collection", normalizedCollection)
                         payload.put("rank", "-")
+                        payload.put("rank_value", -1)
+                        payload.put("rank_known", false)
                         payload.put("display_name", "You")
                         payload.put("score", 0)
                         payload.put("is_player", true)
+                        Log.d(TAG, "loadPlayerScore result: leaderboardId=$leaderboardId timeSpan=$normalizedTimeSpan collection=$normalizedCollection score=null")
                         activity.runOnUiThread { emitSignalSafe("leaderboard_player_score_loaded", leaderboardId, payload.toString()) }
                     }
                 } else {
@@ -692,7 +721,11 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
                             { retryCode, retryMsg ->
                                 val retryPayload = JSONObject()
                                 retryPayload.put("leaderboard_id", leaderboardId)
+                                retryPayload.put("time_span", normalizedTimeSpan)
+                                retryPayload.put("collection", normalizedCollection)
                                 retryPayload.put("rank", "-")
+                                retryPayload.put("rank_value", -1)
+                                retryPayload.put("rank_known", false)
                                 retryPayload.put("display_name", "You")
                                 retryPayload.put("score", 0)
                                 retryPayload.put("is_player", true)
@@ -707,7 +740,11 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
                     }
                     val payload = JSONObject()
                     payload.put("leaderboard_id", leaderboardId)
+                    payload.put("time_span", normalizedTimeSpan)
+                    payload.put("collection", normalizedCollection)
                     payload.put("rank", "-")
+                    payload.put("rank_value", -1)
+                    payload.put("rank_known", false)
                     payload.put("display_name", "You")
                     payload.put("score", 0)
                     payload.put("is_player", true)
