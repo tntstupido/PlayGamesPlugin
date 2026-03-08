@@ -32,6 +32,8 @@ This plugin integrates Google Play Games Services into Godot games using the mod
 - Failure status codes are emitted as Kotlin `Long` and declared as Godot signal `Long` (`int64`) to avoid bridge crashes such as `Invalid type for argument #1. Should be of type long`.
 - Snapshot operations (`saveGame`, `loadGame`, `deleteGame`) are guarded when signed out and emit `*_failed` with status `-3` and `"Not signed in"` instead of entering unstable resolution flows.
 - Leaderboard operations retry sign-in one time automatically when API returns `SIGN_IN_REQUIRED` (`statusCode=4`) and then retry the same request once.
+- `loadPlayerScore(...)` always emits `leaderboard_player_score_loaded` (including fallback/error payloads with optional `status_code` and `error` fields) to keep UI rendering stable.
+- `leaderboard_player_score_failed` remains declared for API compatibility but is currently not emitted by the runtime implementation.
 - Startup auth check is intentionally skipped on Xiaomi/Redmi/Poco devices to avoid repeated profile chooser prompts; explicit login UI should be triggered from game UI when needed.
 - Recommended app-side lifecycle hook: call `refreshAuthStatus()` on `NOTIFICATION_APPLICATION_RESUMED`.
 
@@ -267,8 +269,8 @@ func _on_load_game_failed(save_name: String, status_code: int64, message: String
 | `loadGame(saveName)` | void | Load data from a named cloud snapshot |
 | `deleteGame(saveName)` | void | Delete a cloud snapshot |
 | `submitScore(leaderboardId, score)` | void | Submit score to a leaderboard |
-| `loadTopScores(leaderboardId, timeSpan, collection, maxResults, forceReload)` | void | Load top scores (returns JSON via signal) |
-| `loadPlayerScore(leaderboardId, timeSpan, collection, forceReload)` | void | Load current player score/rank (returns JSON via signal) |
+| `loadTopScores(leaderboardId, timeSpan, collection, maxResults, forceReload)` | void | Load top scores (returns JSON via signal). `timeSpan`: `daily`/`weekly`/`all_time` (others fallback to `all_time`), `collection`: `public`/`friends` (others fallback to `public`) |
+| `loadPlayerScore(leaderboardId, timeSpan, collection, forceReload)` | void | Load current player score/rank (returns JSON via signal). Uses same `timeSpan`/`collection` normalization; `forceReload` is currently accepted for API symmetry |
 
 Snake_case compatibility aliases are also exposed for integrations that prefer Godot-style naming:
 `sign_in`, `sign_out`, `is_signed_in`, `refresh_auth_status`, `save_game`, `load_game`, `delete_game`.
@@ -291,7 +293,7 @@ The plugin exposes both camelCase and snake_case for core auth/cloud methods:
 
 | Signal | Parameters | Description |
 |--------|------------|-------------|
-| `sign_in_success` | player_id: String, player_name: String | Emitted on successful manual sign-in |
+| `sign_in_success` | player_id: String, player_name: String | Emitted when manual sign-in succeeds; `player_info_loaded` is the authoritative profile refresh signal |
 | `sign_in_failed` | status_code: int64, message: String | Emitted when sign-in fails/declined |
 | `player_info_loaded` | player_id: String, player_name: String | Emitted when player info is loaded (auto sign-in) |
 | `save_game_success` | save_name: String | Emitted when cloud save succeeds |
@@ -304,10 +306,12 @@ The plugin exposes both camelCase and snake_case for core auth/cloud methods:
 | `leaderboard_submit_failed` | leaderboard_id: String, status_code: int64, message: String | Emitted when score submit fails |
 | `leaderboard_top_scores_loaded` | leaderboard_id: String, json: String | Emitted with top scores JSON |
 | `leaderboard_top_scores_failed` | leaderboard_id: String, status_code: int64, message: String | Emitted when top scores load fails |
-| `leaderboard_player_score_loaded` | leaderboard_id: String, json: String | Emitted with player score JSON |
-| `leaderboard_player_score_failed` | leaderboard_id: String, status_code: int64, message: String | Emitted when player score load fails |
+| `leaderboard_player_score_loaded` | leaderboard_id: String, json: String | Emitted with player score JSON on both success and fallback/error paths |
+| `leaderboard_player_score_failed` | leaderboard_id: String, status_code: int64, message: String | Declared for API compatibility; currently not emitted |
 
 > Note: failure status values are emitted as 64-bit numeric values from Kotlin (`Long`) for reliable Godot bridge marshalling. In GDScript, handling them as `int` or `Variant` is safe.
+>
+> Common status sentinels used by the plugin: `-2` (user canceled), `-3` (snapshot call while signed out), `-1` (local/unknown failure). Non-negative values usually map to Play Games `ApiException.statusCode`.
 
 ## Configuration
 
@@ -318,7 +322,8 @@ The plugin exposes both camelCase and snake_case for core auth/cloud methods:
 | Compile SDK | 35 |
 | Min SDK | 24 (Android 7.0) |
 | Target SDK | 35 |
-| Play Games SDK | 21.0.0 |
+| Play Games SDK (AAR compileOnly) | 21.0.0 |
+| Play Games SDK (Godot export dependency) | 20.1.0 |
 | Godot Library | 4.5.1.stable |
 | JDK | 17 |
 

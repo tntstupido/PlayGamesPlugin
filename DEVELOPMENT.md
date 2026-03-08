@@ -50,6 +50,15 @@ When adding or changing async APIs:
 2. Prefer helper wrappers for failure emission to reduce copy/paste mistakes.
 3. Validate with a forced failure path on device before release.
 
+### Failure Status Conventions
+
+Current plugin-level sentinel values:
+- `-1`: local/unknown failure (for example, missing activity or non-`ApiException` path).
+- `-2`: canceled by user (sign-in flow).
+- `-3`: snapshot operation blocked because user is not signed in.
+
+Non-negative values are typically propagated from Play Games `ApiException.statusCode`.
+
 ### Snapshot Guard Contract
 
 Cloud snapshot operations (`saveGame`, `loadGame`, `deleteGame`) must never run without confirmed auth:
@@ -65,9 +74,20 @@ Current strategy:
 1. Execute requested leaderboard API call.
 2. If failure status is `4`, run one explicit `signIn()` retry.
 3. On success, retry the same leaderboard call exactly once.
-4. If retry fails, emit final failure payload/signal.
+4. If retry fails, emit the API-specific final result:
+   - `submitScore` / `loadTopScores` emit `*_failed`.
+   - `loadPlayerScore` emits fallback JSON via `leaderboard_player_score_loaded` (with `status_code`/`error` fields).
 
 This prevents permanent dead-session states while avoiding infinite auth loops.
+
+### Leaderboard Player Score Signal Contract
+
+`loadPlayerScore(...)` currently uses a resilience-first payload strategy:
+- Success path: emit `leaderboard_player_score_loaded` with real rank/score fields.
+- Missing/unknown score path: emit `leaderboard_player_score_loaded` with fallback values (`rank_value=-1`, `rank_known=false`, score `0`).
+- Error path (including retry failure): emit `leaderboard_player_score_loaded` fallback plus diagnostic fields (`status_code`, `error`).
+
+`leaderboard_player_score_failed` is declared in `getPluginSignals()` for API compatibility, but runtime code does not currently emit it.
 
 ### Xiaomi / Redmi / Poco Startup Policy
 
@@ -212,9 +232,7 @@ PlayGames.getAchievementsClient(activity)
     }
 ```
 
-### Leaderboards (Implemented)
-
-### Leaderboards (Custom UI)
+### Leaderboards (Implemented - Custom UI)
 
 ```kotlin
 // Submit score
@@ -229,6 +247,11 @@ PlayGames.getLeaderboardsClient(activity)
 PlayGames.getLeaderboardsClient(activity)
     .loadCurrentPlayerLeaderboardScore("leaderboard_id", LeaderboardVariant.TIME_SPAN_DAILY, LeaderboardVariant.COLLECTION_PUBLIC)
 ```
+
+**Input normalization in plugin methods:**
+- `timeSpan`: `daily`, `weekly`, otherwise fallback to `all_time`.
+- `collection`: `friends`, otherwise fallback to `public`.
+- `loadPlayerScore(..., forceReload)`: `forceReload` is currently accepted for API symmetry but is not used by `loadCurrentPlayerLeaderboardScore(...)`.
 
 **JSON Payload Format (signals):**
 ```json
@@ -258,27 +281,6 @@ PlayGames.getLeaderboardsClient(activity)
 ```
 
 `rank = -1` plus `rank_known = false` indicates an unknown rank state from Play Games.
-
-
-```kotlin
-// Submit score
-PlayGames.getLeaderboardsClient(activity)
-    .submitScore("leaderboard_id", 1000)
-
-// Show leaderboard UI
-PlayGames.getLeaderboardsClient(activity)
-    .getLeaderboardIntent("leaderboard_id")
-    .addOnSuccessListener { intent ->
-        activity.startActivityForResult(intent, RC_LEADERBOARD)
-    }
-
-// Show all leaderboards
-PlayGames.getLeaderboardsClient(activity)
-    .allLeaderboardsIntent
-    .addOnSuccessListener { intent ->
-        activity.startActivityForResult(intent, RC_LEADERBOARD)
-    }
-```
 
 ## Godot Plugin Integration
 
@@ -323,7 +325,7 @@ override fun getPluginSignals(): Set<SignalInfo> {
 
 ```kotlin
 getActivity()?.runOnUiThread {
-    emitSignal("my_signal", "data")
+    emitSignalSafe("my_signal", "data")
 }
 ```
 
@@ -385,6 +387,16 @@ dependencies {
 - Use `compileOnly` instead of `implementation` to avoid bundling Material Components resources
 - `play-services-auth` is NOT needed for v2 - the old GoogleSignIn API is deprecated
 - The actual dependencies are provided at runtime via `_get_android_dependencies()` in the EditorExportPlugin
+- Keep `app/build.gradle.kts` and `addons/play_games_plugin/play_games_plugin.gd` Play Games versions in sync.
+
+Current runtime dependency declaration in `play_games_plugin.gd`:
+
+```gdscript
+func _get_android_dependencies(platform: EditorExportPlatform, debug: bool) -> PackedStringArray:
+    return PackedStringArray([
+        "com.google.android.gms:play-services-games-v2:20.1.0"
+    ])
+```
 
 ### Why compileOnly?
 

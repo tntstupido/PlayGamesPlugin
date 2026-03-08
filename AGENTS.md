@@ -62,8 +62,8 @@ Build must succeed before any PR.
 - **Authentication**: automatic sign-in, manual sign-in, auth refresh
 - **Player Info**: player ID, display name
 - **Cloud Save**: save, load, delete game data via Snapshots API (with signed-out guard that emits failure signals instead of calling snapshots APIs)
+- **Leaderboards**: submit score, load top scores, load current player score
 
 ## Planned Features
 
 - Achievements (unlock, increment, show UI)
-- Leaderboards (submit score, show UI)
