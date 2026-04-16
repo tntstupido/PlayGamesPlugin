@@ -2,6 +2,8 @@ package com.mladenstojanovic.playgamesplugin
 
 import android.app.Activity
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.View
 import com.google.android.gms.common.api.ApiException
@@ -23,6 +25,10 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
 
     companion object {
         private const val TAG = "PlayGamesPlugin"
+        private const val META_SERVER_CLIENT_ID = "com.mladenstojanovic.playgamesplugin.SERVER_CLIENT_ID"
+        private const val META_SERVER_CLIENT_ID_ALT = "com.mladenstojanovic.playgamesplugin.server_client_id"
+        private const val META_STARTUP_AUTH_CHECK = "com.mladenstojanovic.playgamesplugin.STARTUP_AUTH_CHECK"
+        private const val META_STARTUP_AUTH_CHECK_ALT = "com.mladenstojanovic.playgamesplugin.startup_auth_check"
 
         init {
             Log.d(TAG, "PlayGamesPlugin class loaded (static init)")
@@ -37,6 +43,20 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
     private var isAuthenticated: Boolean = false
     private var currentPlayerId: String = ""
     private var currentPlayerName: String = ""
+    private var currentServerAuthCode: String = ""
+    private var lastServerAuthCodeAtMs: Long = 0L
+    private var signInInFlight: Boolean = false
+    private var interactiveSignInAllowedUntilMs: Long = 0L
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var lastResolvedServerClientId: String = ""
+    private var lastResolvedServerClientIdSource: String = "unresolved"
+    private var lastServerClientResolutionPath: String = ""
+
+    private data class ServerClientIdResolution(
+        val value: String,
+        val source: String,
+        val trace: String
+    )
 
     private fun getApiExceptionInfo(exception: Exception?): Pair<Int, String> {
         if (exception == null) {
@@ -130,6 +150,23 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
         return false
     }
 
+    private fun shouldRunStartupAuthCheck(activity: Activity): Boolean {
+        val appInfo = try {
+            activity.packageManager.getApplicationInfo(activity.packageName, android.content.pm.PackageManager.GET_META_DATA)
+        } catch (e: Exception) {
+            Log.w(TAG, "Startup auth-check flag lookup failed; defaulting to enabled", e)
+            null
+        }
+        val metadata = appInfo?.metaData ?: return true
+        if (metadata.containsKey(META_STARTUP_AUTH_CHECK)) {
+            return metadata.getBoolean(META_STARTUP_AUTH_CHECK, false)
+        }
+        if (metadata.containsKey(META_STARTUP_AUTH_CHECK_ALT)) {
+            return metadata.getBoolean(META_STARTUP_AUTH_CHECK_ALT, false)
+        }
+        return true
+    }
+
 
     override fun getPluginName(): String {
         return "PlayGamesPlugin"
@@ -168,9 +205,11 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
         // Get the sign-in client
         gamesSignInClient = PlayGames.getGamesSignInClient(activity)
 
-        // Check authentication status silently (skip Xiaomi-family devices due repeated profile-chooser prompt)
-        if (isXiaomiFamilyDevice()) {
-            Log.w(TAG, "Skipping startup auth check on Xiaomi-family device; waiting for explicit sign-in")
+        // Startup auth check is enabled by default so PGS v2 can auto-sign users
+        // when the platform/session already has an authenticated account.
+        val startupAuthCheckEnabled = shouldRunStartupAuthCheck(activity)
+        if (!startupAuthCheckEnabled) {
+            Log.d(TAG, "Startup auth check disabled; waiting for explicit sign-in")
         } else {
             checkAuthenticationStatus()
         }
@@ -207,10 +246,108 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
                     currentPlayerName = player.displayName
                     Log.d(TAG, "Player loaded: $currentPlayerName ($currentPlayerId)")
                     emitSignalSafe("player_info_loaded", currentPlayerId, currentPlayerName)
+                    requestServerAuthCodeInternal("player_info_loaded")
                 } else {
                     Log.e(TAG, "Failed to load player info", task.exception)
                 }
             }
+    }
+
+    private fun resolveServerClientId(activity: Activity): String {
+        return resolveServerClientIdDetailed(activity).value
+    }
+
+    private fun resolveServerClientIdDetailed(activity: Activity): ServerClientIdResolution {
+        val appRes = activity.resources
+        val appPkg = activity.packageName
+        val trace = mutableListOf<String>()
+        val names = listOf("default_web_client_id", "server_client_id")
+        for (name in names) {
+            trace.add("res:$name:lookup")
+            val id = appRes.getIdentifier(name, "string", appPkg)
+            if (id != 0) {
+                trace.add("res:$name:id=$id")
+                val value = appRes.getString(id).trim()
+                if (value.isNotEmpty()) {
+                    trace.add("res:$name:non_empty")
+                    return ServerClientIdResolution(value, "resource:$name", trace.joinToString(" -> "))
+                }
+                trace.add("res:$name:empty")
+            } else {
+                trace.add("res:$name:missing")
+            }
+        }
+        val appInfo = try {
+            activity.packageManager.getApplicationInfo(appPkg, android.content.pm.PackageManager.GET_META_DATA)
+        } catch (_: Exception) {
+            trace.add("manifest:metadata:error")
+            null
+        }
+        val metadata = appInfo?.metaData
+        if (metadata != null) {
+            trace.add("manifest:metadata:present")
+            val manifestCandidates = listOf(META_SERVER_CLIENT_ID, META_SERVER_CLIENT_ID_ALT)
+            for (metaName in manifestCandidates) {
+                trace.add("manifest:$metaName:lookup")
+                val value = metadata.getString(metaName)?.trim().orEmpty()
+                if (value.isNotEmpty()) {
+                    trace.add("manifest:$metaName:non_empty")
+                    return ServerClientIdResolution(value, "manifest:$metaName", trace.joinToString(" -> "))
+                }
+                trace.add("manifest:$metaName:empty_or_missing")
+            }
+        } else {
+            trace.add("manifest:metadata:missing")
+        }
+        return ServerClientIdResolution("", "unresolved", trace.joinToString(" -> "))
+    }
+
+    private fun requestServerAuthCodeInternal(reason: String) {
+        if (!isAuthenticated) {
+            Log.d(TAG, "Skipping auth code request ($reason): not authenticated")
+            return
+        }
+        val activity = getActivity() ?: return
+        val client = gamesSignInClient ?: return
+        val resolution = resolveServerClientIdDetailed(activity)
+        lastResolvedServerClientId = resolution.value
+        lastResolvedServerClientIdSource = resolution.source
+        lastServerClientResolutionPath = resolution.trace
+        if (resolution.value.isEmpty()) {
+            Log.w(
+                TAG,
+                "Skipping auth code request ($reason): unresolved server client id source=${resolution.source} trace=${resolution.trace}"
+            )
+            return
+        }
+        Log.d(
+            TAG,
+            "Auth code request ($reason): resolved server client id='${resolution.value}' source=${resolution.source} trace=${resolution.trace}"
+        )
+        client.requestServerSideAccess(resolution.value, false).addOnCompleteListener { task ->
+            if (task.isSuccessful) {
+                val authCode = task.result ?: ""
+                if (authCode.isNotEmpty()) {
+                    currentServerAuthCode = authCode
+                    lastServerAuthCodeAtMs = System.currentTimeMillis()
+                    Log.d(
+                        TAG,
+                        "Server auth code refreshed ($reason) source=${resolution.source} serverClientId='${resolution.value}' refreshedAtMs=$lastServerAuthCodeAtMs"
+                    )
+                } else {
+                    Log.w(
+                        TAG,
+                        "Server auth code request returned empty code ($reason) source=${resolution.source} serverClientId='${resolution.value}'"
+                    )
+                }
+            } else {
+                Log.w(
+                    TAG,
+                    "requestServerSideAccess failed ($reason) source=${resolution.source} serverClientId='${resolution.value}' trace=${resolution.trace}"
+                )
+                logTaskFailure("requestServerSideAccess($reason)", task.exception, task.isCanceled)
+            }
+        }
     }
 
     private fun parseTimeSpan(value: String): Int {
@@ -259,28 +396,81 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
     @UsedByGodot
     fun signIn() {
         Log.d(TAG, "SignIn called")
+        val nowMs = System.currentTimeMillis()
+        val interactiveWindowArmed = interactiveSignInAllowedUntilMs > 0L
+        if (interactiveWindowArmed && nowMs > interactiveSignInAllowedUntilMs) {
+            Log.w(TAG, "SignIn rejected: not in user-initiated window")
+            emitSignalSafe("sign_in_failed", -6L, "Sign-in must be user initiated")
+            interactiveSignInAllowedUntilMs = 0L
+            return
+        }
+        if (signInInFlight) {
+            Log.d(TAG, "SignIn ignored: request already in flight")
+            return
+        }
+        val activity = getActivity() ?: run {
+            Log.e(TAG, "SignIn failed: activity is null")
+            emitSignalSafe("sign_in_failed", -1L, "Activity not available")
+            return
+        }
+        signInInFlight = true
+        activity.runOnUiThread {
+            val client = gamesSignInClient
+            if (client == null) {
+                signInInFlight = false
+                Log.e(TAG, "SignIn failed: gamesSignInClient is null")
+                emitSignalSafe("sign_in_failed", -1L, "Games sign-in client unavailable")
+                return@runOnUiThread
+            }
 
-        gamesSignInClient?.signIn()?.addOnCompleteListener { task ->
-            val result = task.result
-            Log.d(TAG, "Sign in task: successful=${task.isSuccessful}, canceled=${task.isCanceled}, resultAuth=${result?.isAuthenticated}")
-            if (task.isSuccessful && result != null && result.isAuthenticated) {
-                isAuthenticated = true
-                Log.d(TAG, "Sign in successful")
-                loadPlayerInfo()
-                getActivity()?.runOnUiThread {
-                    emitSignalSafe("sign_in_success", currentPlayerId, currentPlayerName)
+            mainHandler.postDelayed({
+                if (!signInInFlight) {
+                    return@postDelayed
                 }
-            } else {
-                isAuthenticated = false
-                val isCanceled = task.isCanceled
-                val (statusCode, message) = if (isCanceled) {
-                    Pair(-2, "Canceled")
+                Log.w(TAG, "SignIn callback timeout reached; checking isAuthenticated fallback")
+                client.isAuthenticated.addOnCompleteListener { authTask ->
+                    if (!signInInFlight) {
+                        return@addOnCompleteListener
+                    }
+                    val authOk = authTask.isSuccessful && authTask.result?.isAuthenticated == true
+                    if (authOk) {
+                        isAuthenticated = true
+                        signInInFlight = false
+                        loadPlayerInfo()
+                        requestServerAuthCodeInternal("sign_in_timeout_fallback")
+                        emitSignalSafe("sign_in_success", currentPlayerId, currentPlayerName)
+                    } else {
+                        isAuthenticated = false
+                        signInInFlight = false
+                        emitSignalSafe("sign_in_failed", -4L, "Sign-in timeout")
+                    }
+                }
+            }, 12000L)
+
+            client.signIn().addOnCompleteListener { task ->
+                signInInFlight = false
+                val result = task.result
+                Log.d(TAG, "Sign in task: successful=${task.isSuccessful}, canceled=${task.isCanceled}, resultAuth=${result?.isAuthenticated}")
+                if (task.isSuccessful && result != null && result.isAuthenticated) {
+                    isAuthenticated = true
+                    Log.d(TAG, "Sign in successful")
+                    loadPlayerInfo()
+                    requestServerAuthCodeInternal("sign_in")
+                    activity.runOnUiThread {
+                        emitSignalSafe("sign_in_success", currentPlayerId, currentPlayerName)
+                    }
                 } else {
-                    getApiExceptionInfo(task.exception)
-                }
-                logTaskFailure("Sign in", task.exception, isCanceled)
-                getActivity()?.runOnUiThread {
-                    emitSignalSafe("sign_in_failed", statusCode.toLong(), message)
+                    isAuthenticated = false
+                    val isCanceled = task.isCanceled
+                    val (statusCode, message) = if (isCanceled) {
+                        Pair(-2, "Canceled")
+                    } else {
+                        getApiExceptionInfo(task.exception)
+                    }
+                    logTaskFailure("Sign in", task.exception, isCanceled)
+                    activity.runOnUiThread {
+                        emitSignalSafe("sign_in_failed", statusCode.toLong(), message)
+                    }
                 }
             }
         }
@@ -292,6 +482,26 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
     @UsedByGodot
     fun sign_in() {
         signIn()
+    }
+
+    /**
+     * Arm a short explicit-login window to allow interactive sign-in.
+     * Prevents accidental startup/background sign-in popups.
+     */
+    @UsedByGodot
+    fun armInteractiveSignInWindow(windowMs: Long = 15000L) {
+        val clamped = when {
+            windowMs < 1000L -> 1000L
+            windowMs > 60000L -> 60000L
+            else -> windowMs
+        }
+        interactiveSignInAllowedUntilMs = System.currentTimeMillis() + clamped
+        Log.d(TAG, "Interactive sign-in window armed for ${clamped}ms")
+    }
+
+    @UsedByGodot
+    fun arm_interactive_sign_in_window(window_ms: Long = 15000L) {
+        armInteractiveSignInWindow(window_ms)
     }
 
     /**
@@ -365,6 +575,76 @@ class PlayGamesPlugin(godot: Godot) : GodotPlugin(godot) {
     @UsedByGodot
     fun getPlayerDisplayName(): String {
         return currentPlayerName
+    }
+
+    @UsedByGodot
+    fun getDebugStateJson(): String {
+        val obj = JSONObject()
+        obj.put("plugin_version", "2026-04-04-signin-debug-6")
+        obj.put("is_authenticated", isAuthenticated)
+        obj.put("sign_in_in_flight", signInInFlight)
+        obj.put("has_sign_in_client", gamesSignInClient != null)
+        obj.put("player_id", currentPlayerId)
+        obj.put("player_name", currentPlayerName)
+        obj.put("has_server_auth_code", currentServerAuthCode.isNotEmpty())
+        obj.put("server_auth_code_refreshed_at_ms", lastServerAuthCodeAtMs)
+        obj.put("resolved_server_client_id", lastResolvedServerClientId)
+        obj.put("resolved_server_client_id_source", lastResolvedServerClientIdSource)
+        obj.put("server_client_id_resolution_trace", lastServerClientResolutionPath)
+        return obj.toString()
+    }
+
+    @UsedByGodot
+    fun get_debug_state_json(): String {
+        return getDebugStateJson()
+    }
+
+    /**
+     * Request a fresh server auth code for backend proof verification.
+     */
+    @UsedByGodot
+    fun requestServerAuthCode() {
+        requestServerAuthCodeInternal("manual")
+    }
+
+    /**
+     * Snake_case alias for compatibility with integrations expecting Godot-style names.
+     */
+    @UsedByGodot
+    fun request_server_auth_code() {
+        requestServerAuthCode()
+    }
+
+    /**
+     * Returns the last successfully cached Play Games server auth code.
+     */
+    @UsedByGodot
+    fun getServerAuthCode(): String {
+        return currentServerAuthCode
+    }
+
+    /**
+     * Snake_case alias for compatibility with integrations expecting Godot-style names.
+     */
+    @UsedByGodot
+    fun get_server_auth_code(): String {
+        return getServerAuthCode()
+    }
+
+    /**
+     * Returns the Unix milliseconds timestamp of the cached auth code refresh.
+     */
+    @UsedByGodot
+    fun getServerAuthCodeRefreshedAtMs(): Long {
+        return lastServerAuthCodeAtMs
+    }
+
+    /**
+     * Snake_case alias for compatibility with integrations expecting Godot-style names.
+     */
+    @UsedByGodot
+    fun get_server_auth_code_refreshed_at_ms(): Long {
+        return getServerAuthCodeRefreshedAtMs()
     }
 
     // ==================== Cloud Save (Snapshots) ====================

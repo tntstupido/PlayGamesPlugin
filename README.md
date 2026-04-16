@@ -265,6 +265,9 @@ func _on_load_game_failed(save_name: String, status_code: int64, message: String
 | `refreshAuthStatus()` | void | Re-check auth (call on app resume) |
 | `getPlayerId()` | String | Get player's unique ID |
 | `getPlayerDisplayName()` | String | Get player's display name |
+| `requestServerAuthCode()` | void | Request/refresh Play Games server auth code for backend verification |
+| `getServerAuthCode()` | String | Get last cached Play Games server auth code |
+| `getServerAuthCodeRefreshedAtMs()` | int64 | Unix ms timestamp when auth code was last refreshed |
 | `saveGame(saveName, data, description)` | void | Save data to a named cloud snapshot |
 | `loadGame(saveName)` | void | Load data from a named cloud snapshot |
 | `deleteGame(saveName)` | void | Delete a cloud snapshot |
@@ -273,7 +276,8 @@ func _on_load_game_failed(save_name: String, status_code: int64, message: String
 | `loadPlayerScore(leaderboardId, timeSpan, collection, forceReload)` | void | Load current player score/rank (returns JSON via signal). Uses same `timeSpan`/`collection` normalization; `forceReload` is currently accepted for API symmetry |
 
 Snake_case compatibility aliases are also exposed for integrations that prefer Godot-style naming:
-`sign_in`, `sign_out`, `is_signed_in`, `refresh_auth_status`, `save_game`, `load_game`, `delete_game`.
+`sign_in`, `sign_out`, `is_signed_in`, `refresh_auth_status`, `request_server_auth_code`,
+`get_server_auth_code`, `get_server_auth_code_refreshed_at_ms`, `save_game`, `load_game`, `delete_game`.
 
 ### Method Naming Compatibility
 
@@ -285,6 +289,9 @@ The plugin exposes both camelCase and snake_case for core auth/cloud methods:
 | `signOut()` | `sign_out()` |
 | `isSignedIn()` | `is_signed_in()` |
 | `refreshAuthStatus()` | `refresh_auth_status()` |
+| `requestServerAuthCode()` | `request_server_auth_code()` |
+| `getServerAuthCode()` | `get_server_auth_code()` |
+| `getServerAuthCodeRefreshedAtMs()` | `get_server_auth_code_refreshed_at_ms()` |
 | `saveGame(...)` | `save_game(...)` |
 | `loadGame(...)` | `load_game(...)` |
 | `deleteGame(...)` | `delete_game(...)` |
@@ -330,6 +337,14 @@ The plugin exposes both camelCase and snake_case for core auth/cloud methods:
 ### Permissions (Automatic)
 - `INTERNET` - Required for Play Games Services
 - `ACCESS_NETWORK_STATE` - Network connectivity check
+
+### Server Auth Code Requirement
+
+If you use backend verification with `requestServerAuthCode()`, your Android app resources must include one of:
+- `@string/default_web_client_id` (preferred)
+- `@string/server_client_id`
+
+These come from your Google/Firebase config for the app package and are required for `GamesSignInClient.requestServerSideAccess(...)`.
 
 ### Getting Your App ID
 
